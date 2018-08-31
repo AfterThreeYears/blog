@@ -18,7 +18,7 @@ const gitUrl = 'https://github.com/AfterThreeYears/blog/blob/master';
 https://github.com/AfterThreeYears/blog/issues
 \n`;
     content += mds.map(mdFile => {
-      const mdUrl = encodeURIComponent(`${gitUrl}/${mdFile}`);
+      const mdUrl = `${gitUrl}/${encodeURIComponent(mdFile)}`;
       return `## [${mdFile}](${mdUrl})`;
     }).join('\n');
     fs.writeFileAsync(resolve(__dirname, blankList[0]), content);
