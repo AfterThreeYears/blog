@@ -1,14 +1,18 @@
-const { resolve } = require('path');
 const fs = require('fs');
+const { resolve } = require('path');
+const dayjs = require('dayjs');
 const { promisifyAll } = require('bluebird');
 
 promisifyAll(fs);
+
 const blankList = ['README.md'];
 const regexp = /.+\.md$/;
+const formatTime = 'YYYY-MM-DD HH:mm:ss';
 const gitUrl = 'https://github.com/AfterThreeYears/blog/blob/master';
-let content = `# BLOG
-https://github.com/AfterThreeYears/blog/issues
-\n`;
+let content = `# [博客地址](https://github.com/AfterThreeYears/blog/issues)
+<br />
+文章|创建时间|修改时间
+---|:--:|---:\n`;
 
 (async () => {
   let filenames;
@@ -18,10 +22,18 @@ https://github.com/AfterThreeYears/blog/issues
     console.error(`[读取错误]: ${error.message}`);
   }
   const mds = filenames.filter(filename => regexp.test(filename.toLowerCase()) && !blankList.includes(filename));
-
-  content += mds.map(mdFile => {
+  const mdStats = [];
+  for (let index = 0; index < mds.length; index += 1) {
+    const mdFile = mds[index];
+    const stats = await fs.statAsync(resolve(__dirname, mdFile));
+    mdStats.push({ mdFile, stats });
+  }
+  content += mdStats.map(({ mdFile, stats }) => {
+    const { birthtime, mtime } = stats;
+    const mtimeStr = dayjs(mtime).format(formatTime);
+    const birthtimeStr = dayjs(birthtime).format(formatTime);
     const mdUrl = `${gitUrl}/${encodeURIComponent(mdFile)}`;
-    return `## [${mdFile}](${mdUrl})`;
+    return `[${mdFile}](${mdUrl})|${birthtimeStr}|${mtimeStr}`;
   }).join('\n');
   try {
     await fs.writeFileAsync(resolve(__dirname, blankList[0]), content);
