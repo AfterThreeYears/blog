@@ -10,9 +10,9 @@ const regexp = /.+\.md$/;
 const formatTime = 'YYYY-MM-DD HH:mm:ss';
 const gitUrl = 'https://github.com/AfterThreeYears/blog/blob/master';
 let content = `# [博客地址](https://github.com/AfterThreeYears/blog/issues)
-<br />
-文章|创建时间|修改时间
----|:--:|---:\n`;
+| 文章 | 创建时间 | 修改时间 |
+|:---|:--------|:------------|
+`;
 
 (async () => {
   let filenames;
@@ -33,7 +33,7 @@ let content = `# [博客地址](https://github.com/AfterThreeYears/blog/issues)
     const mtimeStr = dayjs(mtime).format(formatTime);
     const birthtimeStr = dayjs(birthtime).format(formatTime);
     const mdUrl = `${gitUrl}/${encodeURIComponent(mdFile)}`;
-    return `[${mdFile}](${mdUrl})|${birthtimeStr}|${mtimeStr}`;
+    return `|[${mdFile}](${mdUrl})|${birthtimeStr}|${mtimeStr}|`;
   }).join('\n');
   try {
     await fs.writeFileAsync(resolve(__dirname, blankList[0]), content);
