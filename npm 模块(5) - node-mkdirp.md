@@ -1,6 +1,6 @@
 ## 用法
 
-代码中使用
+#### 代码中使用
 ```javascript
 var mkdirp = require('mkdirp');
     
@@ -17,15 +17,86 @@ try {
 };
 ```
 
-脚本使用
-```shell
+#### 脚本使用
+```
 # 会按照顺序在当前目录下建1/2/3 a/b/c文件夹
 mkdirp 1/2/3 a/b/c
 ```
 
 ## 源码学习
 
+### 同步处理
+ 1. 格式化参数
+ 2. 转换路径
+ 3. 使用同步方法mkdirSync建立文件夹
+ 4. 没有错误抛出就结束
+ 5. 有错误抛出则判断错误类型如果不是`ENOENT`那么就使用statSync读取文件元属性，如果是类型是文件夹，那么不抛出错误，说明已经有这个文件夹了，直接结束，否则抛出错误
+ 1 如果错误类型为`ENOENT`，那么使用`path.dirname(p)`尝试建立上一级的文件夹，如果建立成功，那么接下来建立p路径的文件夹，也成功的话就结束。如果建立`path.dirname(p)`也抛出`ENOENT`错误，那么继续建上上级的文件夹，以此循环，从最上级的文件夹一级一级往下建，直到达成最终目的
+
+### 异步处理
+ 1. 异步的逻辑基本和同步差不多，只是中间的fs方法改用异步的，只是异步的逻辑看上去比较绕，先把同步的逻辑里明白然后再去理解异步的就好理解多了，下面也在异步的代码中打入了[logger](#2)，查看[logger](#2)会更加的了解这个流程
+ 2. 值得一说的是cli里调用的是异步模块
+ 
+### cli脚本
+ 1. 首先使用`minimist`进行格式化argv
+ 2. 如果是`help`命令的话使用创建一个读流`fs.createReadStream`使用管道`pipe`接入到写流`process.stdout`。
+ 3. 然后使用递归的模式来查看`paths`数组是否还有值，有的话调用之前的异步创建文件夹方法，没有则退出程序。
+ ``
+
 ```javascript
+// 同步处理逻辑
+mkdirP.sync = function sync (p, opts, made) {
+    // 格式化opts
+    if (!opts || typeof opts !== 'object') {
+        opts = { mode: opts };
+    }
+    
+    var mode = opts.mode;
+    var xfs = opts.fs || fs;
+    
+    if (mode === undefined) {
+        mode = _0777 & (~process.umask());
+    }
+    if (!made) made = null;
+    // 把用户传入的路径转换为绝对路径
+    p = path.resolve(p);
+
+    try {
+        // 建立文件夹
+        xfs.mkdirSync(p, mode);
+        made = made || p;
+    }
+    catch (err0) {
+        switch (err0.code) {
+            case 'ENOENT' :
+                // 建上一级的文件夹
+                made = sync(path.dirname(p), opts, made);
+                // 建上一级文件夹成功，那么再尝试建当前目录的文件夹
+                sync(p, opts, made);
+                break;
+
+            // In the case of any other error, just see if there's a dir
+            // there already.  If so, then hooray!  If not, then something
+            // is borked.
+            default:
+                var stat;
+                try {
+                    stat = xfs.statSync(p);
+                }
+                catch (err1) {
+                    throw err0;
+                }
+                if (!stat.isDirectory()) throw err0;
+                break;
+        }
+    }
+
+    return made;
+};
+```
+
+```javascript
+// node_modules/.bin/mkdirp
 #!/usr/bin/env node
 
 var mkdirp = require('../');
@@ -65,13 +136,10 @@ var mode = argv.mode ? parseInt(argv.mode, 8) : undefined;
     }
 })();
 
+```
 
-var path = require('path');
-var fs = require('fs');
-var _0777 = parseInt('0777', 8);
-
-module.exports = mkdirP.mkdirp = mkdirP.mkdirP = mkdirP;
-
+```javascript
+// mkdirp.js 异步处理
 function mkdirP (p, opts, f, made) {
     console.log(`我要建立${p}文件夹`)
     // 这里是对cli传入的参数做兼容处理
@@ -135,59 +203,10 @@ function mkdirP (p, opts, f, made) {
         }
     });
 }
-
-mkdirP.sync = function sync (p, opts, made) {
-    // 格式化opts
-    if (!opts || typeof opts !== 'object') {
-        opts = { mode: opts };
-    }
-    
-    var mode = opts.mode;
-    var xfs = opts.fs || fs;
-    
-    if (mode === undefined) {
-        mode = _0777 & (~process.umask());
-    }
-    if (!made) made = null;
-    // 把用户传入的路径转换为绝对路径
-    p = path.resolve(p);
-
-    try {
-        // 建立文件夹
-        xfs.mkdirSync(p, mode);
-        made = made || p;
-    }
-    catch (err0) {
-        switch (err0.code) {
-            case 'ENOENT' :
-                // 建上一级的文件夹
-                made = sync(path.dirname(p), opts, made);
-                // 建上一级文件夹成功，那么再尝试建当前目录的文件夹
-                sync(p, opts, made);
-                break;
-
-            // In the case of any other error, just see if there's a dir
-            // there already.  If so, then hooray!  If not, then something
-            // is borked.
-            default:
-                var stat;
-                try {
-                    stat = xfs.statSync(p);
-                }
-                catch (err1) {
-                    throw err0;
-                }
-                if (!stat.isDirectory()) throw err0;
-                break;
-        }
-    }
-
-    return made;
-};
 ```
 
-
-## - **打入log 观察文件夹建立的顺序**
+## 异步运行logger
+   打入logger 观察文件夹建立的顺序
 ```
 ➜  blog git:(master) ✗ mkdirp 1/2/3
 我要建立1/2/3文件夹
