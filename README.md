@@ -6,3 +6,4 @@
 |[npm 模块(2) - mem.md](https://github.com/AfterThreeYears/blog/blob/master/npm%20%E6%A8%A1%E5%9D%97(2)%20-%20mem.md)|2018-08-30 14:26:55|2018-08-30 15:34:01|
 |[npm 模块(3) - is-sorted.md](https://github.com/AfterThreeYears/blog/blob/master/npm%20%E6%A8%A1%E5%9D%97(3)%20-%20is-sorted.md)|2018-08-31 20:51:32|2018-08-31 22:17:53|
 |[npm 模块(4) - array-first && array-last.md](https://github.com/AfterThreeYears/blog/blob/master/npm%20%E6%A8%A1%E5%9D%97(4)%20-%20array-first%20%26%26%20array-last.md)|2018-09-01 18:26:40|2018-09-01 20:07:23|
+|[npm 模块(5) - node-mkdirp.md](https://github.com/AfterThreeYears/blog/blob/master/npm%20%E6%A8%A1%E5%9D%97(5)%20-%20node-mkdirp.md)|2018-09-02 08:40:55|2018-09-02 10:18:29|
