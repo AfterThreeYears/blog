@@ -186,3 +186,20 @@ mkdirP.sync = function sync (p, opts, made) {
 };
 ```
 
+
+## - **打入log 观察文件夹建立的顺序**
+```
+➜  blog git:(master) ✗ mkdirp 1/2/3
+我要建立1/2/3文件夹
+建立/Users/wangjingcheng/wbb/git/github/blog/1/2/3文件夹失败，需要先建立/Users/wangjingcheng/wbb/git/github/blog/1/2文件夹
+我要建立/Users/wangjingcheng/wbb/git/github/blog/1/2文件夹
+建立/Users/wangjingcheng/wbb/git/github/blog/1/2文件夹失败，需要先建立/Users/wangjingcheng/wbb/git/github/blog/1文件夹
+我要建立/Users/wangjingcheng/wbb/git/github/blog/1文件夹
+建立/Users/wangjingcheng/wbb/git/github/blog/1文件夹成功
+建/Users/wangjingcheng/wbb/git/github/blog/1成功，接下来建立/Users/wangjingcheng/wbb/git/github/blog/1/2文件夹
+我要建立/Users/wangjingcheng/wbb/git/github/blog/1/2文件夹
+建立/Users/wangjingcheng/wbb/git/github/blog/1/2文件夹成功
+建/Users/wangjingcheng/wbb/git/github/blog/1/2成功，接下来建立/Users/wangjingcheng/wbb/git/github/blog/1/2/3文件夹
+我要建立/Users/wangjingcheng/wbb/git/github/blog/1/2/3文件夹
+建立/Users/wangjingcheng/wbb/git/github/blog/1/2/3文件夹成功
+```
