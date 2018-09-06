@@ -10,8 +10,8 @@ const regexp = /.+\.md$/;
 const formatTime = 'YYYY-MM-DD HH:mm:ss';
 const gitUrl = 'https://github.com/AfterThreeYears/blog/blob/master';
 let content = `# [博客地址](https://github.com/AfterThreeYears/blog/issues)
-| 文章 | 创建时间 | 修改时间 |
-|:---|:--------|:------------|
+| 文章 | 修改时间 |
+|:---|:------------|
 `;
 
 (async () => {
@@ -31,9 +31,8 @@ let content = `# [博客地址](https://github.com/AfterThreeYears/blog/issues)
   content += mdStats.map(({ mdFile, stats }) => {
     const { birthtime, mtime } = stats;
     const mtimeStr = dayjs(mtime).format(formatTime);
-    const birthtimeStr = dayjs(birthtime).format(formatTime);
     const mdUrl = `${gitUrl}/${encodeURIComponent(mdFile)}`;
-    return `|[${mdFile}](${mdUrl})|${birthtimeStr}|${mtimeStr}|`;
+    return `|[${mdFile}](${mdUrl})|${mtimeStr}|`;
   }).join('\n');
   try {
     await fs.writeFileAsync(resolve(__dirname, blankList[0]), content);
