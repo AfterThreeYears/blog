@@ -4,9 +4,7 @@
   "description": "https://github.com/AfterThreeYears/blog/issues",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "deploy": "node deploy.js",
-    "backup": "sh ./build/backup.sh"
+    "deploy": "sh deploy.sh"
   },
   "repository": {
     "type": "git",

@@ -8,7 +8,7 @@ promisifyAll(fs);
 const regexp = /.+\.md$/;
 const formatTime = 'YYYY-MM-DD HH:mm:ss';
 const gitUrl = 'https://github.com/AfterThreeYears/blog/blob/master';
-let content = `# [博客地址](https://github.com/AfterThreeYears/blog/issues)
+let content = `# [博客地址](https://github.com/AfterThreeYears/blog)
 | 文章 | 修改时间 |
 |:---|:------------|
 `;
@@ -31,7 +31,7 @@ let content = `# [博客地址](https://github.com/AfterThreeYears/blog/issues)
       return `|[${mdFile}](${mdUrl})|${mtimeStr}|`;
     }).join('\n');
 
-    await fs.writeFileAsync(resolve(__dirname, 'READMD.md'), content);
+    await fs.writeFileAsync(resolve(__dirname, 'README.md'), content);
   } catch (error) {
     console.error(error);
   }
