@@ -5,7 +5,6 @@ const { promisifyAll } = require('bluebird');
 
 promisifyAll(fs);
 
-const blankList = ['README.md'];
 const regexp = /.+\.md$/;
 const formatTime = 'YYYY-MM-DD HH:mm:ss';
 const gitUrl = 'https://github.com/AfterThreeYears/blog/blob/master';
@@ -15,28 +14,25 @@ let content = `# [博客地址](https://github.com/AfterThreeYears/blog/issues)
 `;
 
 (async () => {
-  let filenames;
   try {
-    filenames = await fs.readdirAsync('.');
+    const filenames = await fs.readdirAsync('./docs');
+    // console.log('filenames', filenames);
+    const mds = filenames.filter(filename => regexp.test(filename.toLowerCase()));
+
+    const mdStats = [];
+    for (let i = 0; i < mds.length; i += 1) {
+      const mdFile = mds[i];
+      const stats = await fs.statAsync(resolve(__dirname, 'docs', mdFile));
+      mdStats.push({ mdFile, stats });
+    }
+    content += mdStats.map(({ mdFile, stats }) => {
+      const mtimeStr = dayjs(stats.statsmtime).format(formatTime);
+      const mdUrl = `${gitUrl}/${encodeURIComponent(mdFile)}`;
+      return `|[${mdFile}](${mdUrl})|${mtimeStr}|`;
+    }).join('\n');
+
+    await fs.writeFileAsync(resolve(__dirname, 'READMD.md'), content);
   } catch (error) {
-    console.error(`[读取错误]: ${error.message}`);
-  }
-  const mds = filenames.filter(filename => regexp.test(filename.toLowerCase()) && !blankList.includes(filename));
-  const mdStats = [];
-  for (let index = 0; index < mds.length; index += 1) {
-    const mdFile = mds[index];
-    const stats = await fs.statAsync(resolve(__dirname, mdFile));
-    mdStats.push({ mdFile, stats });
-  }
-  content += mdStats.map(({ mdFile, stats }) => {
-    const { birthtime, mtime } = stats;
-    const mtimeStr = dayjs(mtime).format(formatTime);
-    const mdUrl = `${gitUrl}/${encodeURIComponent(mdFile)}`;
-    return `|[${mdFile}](${mdUrl})|${mtimeStr}|`;
-  }).join('\n');
-  try {
-    await fs.writeFileAsync(resolve(__dirname, blankList[0]), content);
-  } catch (error) {
-    console.error(`[写入错误]: ${error.message}`);
+    console.error(error);
   }
 })();

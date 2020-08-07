@@ -198,3 +198,155 @@ function handleTopLevel(bookKeeping) {
   }
 }
 ```
+
+在runExtractedPluginEventsInBatch中会通过targetInst这个fiber对象，从这个对象一直往上寻找，寻找有一样的事件绑定的节点，并且把他们的回调事件组合到合成事件对象上，这里先讨论事件触发的流程，所以先简单带过合成事件是如何生成的以及是如何去寻找到需要被触发的事件。
+
+在拿到合成事件以后调用runEventsInBatch函数
+
+```js
+function runEventsInBatch(events) {
+  forEachAccumulated(processingEventQueue, executeDispatchesAndReleaseTopLevel);
+}
+```
+
+其中processingEventQueue是多个事件列表，我们这只有一个事件队列，forEachAccumulated它的目的是为了按照队列的顺序去执行多个事件，在我们的例子中其实就相当于*executeDispatchesAndReleaseTopLevel(processingEventQueue)*,接下来就是调用到executeDispatchesAndRelease，从名称就看出来他是首先执行事件，然后对事件对象进行释放
+
+```js
+var executeDispatchesAndRelease = function (event) {
+  if (event) {
+    executeDispatchesInOrder(event);
+
+    if (!event.isPersistent()) {
+      event.constructor.release(event);
+    }
+  }
+};
+```
+
+代码很少，首先调用executeDispatchesInOrder来传入合成事件，在里面按照熟悉去执行合成事件对象上的回调函数，如果有多个回调函数，在执行每个回调函数的时候还会去判断event.isPropagationStopped()的状态，之前有函数调用了合成事件的stopPropagation函数的话，就停止执行后续的回调，但是要注意的时候这里的*dispatchListeners[i]*函数并不是用户传入的回调函数，而是经过包装的事件，这块会在合成事件的生成中介绍，在事件执行结束后react还会去根据用户是否调用了event.persist()函数来决定是否保留这次的事件对象是否要回归事件池，如果未被调用，该事件对象上的状态会被重置，至此事件触发已经完毕。
+
+## 合成事件的生成
+
+从事件监听的流程中我们知道了合成事件是从extractPluginEvents创建出来的，那么看一下extractPluginEvents的代码
+
+```js
+function extractPluginEvents(topLevelType, targetInst, nativeEvent, nativeEventTarget, eventSystemFlags) {
+  var events = null;
+
+  for (var i = 0; i < plugins.length; i++) {
+    var possiblePlugin = plugins[i];
+
+    if (possiblePlugin) {
+      var extractedEvents = possiblePlugin.extractEvents(topLevelType, targetInst, nativeEvent, nativeEventTarget, eventSystemFlags);
+
+      if (extractedEvents) {
+        events = accumulateInto(events, extractedEvents);
+      }
+    }
+  }
+
+  return events;
+}
+```
+首先来了解一下plugins是个什么东西，由于react会服务于不同的平台，所以每个平台的事件会用插件的形式来注入到reactdom中
+
+```js
+injectEventPluginsByName({
+  SimpleEventPlugin: SimpleEventPlugin,
+  EnterLeaveEventPlugin: EnterLeaveEventPlugin,
+  ChangeEventPlugin: ChangeEventPlugin,
+  SelectEventPlugin: SelectEventPlugin,
+  BeforeInputEventPlugin: BeforeInputEventPlugin,
+});
+```
+
+injectEventPluginsByName函数会通过一些操作把事件插件注册到plugins对象上，数据结构如图
+
+<img src="./image/plugins.png" />
+
+所以会依次遍历plugin，调用plugin上的extractEvents函数来尝试是否能够生成出合成事件对象，在我们的例子中用的是click事件，那么它会进入到SimpleEventPlugin.extractEvents函数
+
+```js
+var SimpleEventPlugin = {
+  extractEvents: function (topLevelType, targetInst, nativeEvent, nativeEventTarget, eventSystemFlags) {
+    var EventConstructor;
+    switch (topLevelType) {
+      case TOP_KEY_DOWN:
+      case TOP_KEY_UP:
+        EventConstructor = SyntheticKeyboardEvent;
+        break;
+
+      case TOP_BLUR:
+      case TOP_FOCUS:
+        EventConstructor = SyntheticFocusEvent;
+        break;
+
+      default:
+        EventConstructor = SyntheticEvent;
+        break;
+    }
+
+    var event = EventConstructor.getPooled(dispatchConfig, targetInst, nativeEvent, nativeEventTarget);
+    accumulateTwoPhaseDispatches(event);
+    return event;
+  }
+};
+```
+
+这个函数是通过topLevelType的类型来获取合成事件的构造函数，例如代码中的SyntheticKeyboardEvent，SyntheticFocusEvent等都是SyntheticEvent的子类，在基础上附加了自己事件的特殊属性，我们的click事件会使用到SyntheticEvent这个构造函数，然后通过getPooled函数来创建或者从事件池中取出一个合成事件对象实例。然后在accumulateTwoPhaseDispatchesSingle函数中，按照捕获到冒泡的顺序来获取所有的事件回调
+
+```js
+function accumulateTwoPhaseDispatchesSingle(event) {
+  if (event && event.dispatchConfig.phasedRegistrationNames) {
+    traverseTwoPhase(event._targetInst, accumulateDirectionalDispatches, event);
+  }
+}
+
+function traverseTwoPhase(inst, fn, arg) {
+  var path = [];
+
+  while (inst) {
+    path.push(inst);
+    inst = getParent(inst);
+  }
+
+  var i;
+
+  for (i = path.length; i-- > 0;) {
+    fn(path[i], 'captured', arg);
+  }
+
+  for (i = 0; i < path.length; i++) {
+    fn(path[i], 'bubbled', arg);
+  }
+}
+
+```
+
+traverseTwoPhase函数会从当前的fiber节点通过return，找到所有的不是原生DOM节点的fiber对象，然后推入到列表中，我们的例子中就是
+[ButtonFiber, H1Fiber, DivFiber], 然后执行捕获阶段的循环，从后网前，然后从前往后执行冒泡的循环，然后会往accumulateDirectionalDispatches函数中传入当前执行的fiber和事件执行的阶段。
+
+listenerAtPhase中首先通过原生事件名和当前执行的阶段（捕获，还是冒泡）去再去获取对应的props事件名称（onClick，onClickCapture），然后通过react事件名称去fiber节点上获取到相应的事件回调函数，最后拼接在合成对象的_dispatchListeners数组内，当全部节点运行结束以后_dispatchListeners对象上就会有三个回调函数[handleButtonLog, handleH1Log, handleDivLog]，
+
+到此合成事件构造就完成了，主要做了两件事，
+第一件事通过事件名称去选择合成事件的构造函数，
+第二件事件去获取到组件上事件绑定的回调函数设置到合成事件上，用于事件触发的时候去调用。
+当然还有就是在初始化的时候去注入平台的事件插件。
+
+```js
+
+function listenerAtPhase(inst, event, propagationPhase) {
+  var registrationName = event.dispatchConfig.phasedRegistrationNames[propagationPhase];
+  return getListener(inst, registrationName);
+}
+
+function accumulateDirectionalDispatches(inst, phase, event) {
+  var listener = listenerAtPhase(inst, event, phase);
+  if (listener) {
+    event._dispatchListeners = accumulateInto(event._dispatchListeners, listener);
+    event._dispatchInstances = accumulateInto(event._dispatchInstances, inst);
+  }
+}
+```
+
+## 事件解绑
