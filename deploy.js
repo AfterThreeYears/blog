@@ -49,8 +49,8 @@ async function writeREADMETemplate(MDFileSortedArray) {
   const formatTime = 'YYYY-MM-DD HH:mm:ss';
   const gitUrl = 'https://github.com/AfterThreeYears/blog/blob/master';
   let content = `# [博客地址](https://github.com/AfterThreeYears/blog)
-    | 文章 | 修改时间 |
-    |:---|:------------|
+  | 文章 | 修改时间 |
+  |:---|:------------|
   `;
    content += Object.entries(MDFileSortedArray)
       .map(([path, mtimeMs]) => `|[${path}](${gitUrl}/${encodeURIComponent(path)})|${dayjs(mtimeMs).format(formatTime)}|`)
