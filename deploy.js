@@ -25,11 +25,13 @@ let content = `# [博客地址](https://github.com/AfterThreeYears/blog)
       const stats = await fs.statAsync(resolve(__dirname, 'docs', mdFile));
       mdStats.push({ mdFile, stats });
     }
-    content += mdStats.map(({ mdFile, stats }) => {
-      const mtimeStr = dayjs(stats.statsmtime).format(formatTime);
-      const mdUrl = `${gitUrl}/${encodeURIComponent(mdFile)}`;
-      return `|[${mdFile}](${mdUrl})|${mtimeStr}|`;
-    }).join('\n');
+    content += mdStats
+      .sort((a, b) => b.stats.mtimeMs - a.stats.mtimeMs)
+      .map(({ mdFile, stats }) => {
+        const mtimeStr = dayjs(stats.mtime).format(formatTime);
+        const mdUrl = `${gitUrl}/${encodeURIComponent(mdFile)}`;
+        return `|[${mdFile}](${mdUrl})|${mtimeStr}|`;
+      }).join('\n');
 
     await fs.writeFileAsync(resolve(__dirname, 'README.md'), content);
   } catch (error) {
