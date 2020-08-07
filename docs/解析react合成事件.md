@@ -350,3 +350,6 @@ function accumulateDirectionalDispatches(inst, phase, event) {
 ```
 
 ## 事件解绑
+// Update by 1596788110972
+
+// Update by 1596788197764

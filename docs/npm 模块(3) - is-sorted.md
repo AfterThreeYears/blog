@@ -65,3 +65,6 @@ module.exports = function checksort (array, comparator) {
   return String(a).trim().localeCompare(String(b).trim());
 }
 ```
+// Update by 1596788110967
+
+// Update by 1596788197759

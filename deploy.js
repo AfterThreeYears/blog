@@ -13,6 +13,13 @@ let content = `# [博客地址](https://github.com/AfterThreeYears/blog)
 |:---|:------------|
 `;
 
+async function getMtimeMs(filePath) {
+  const mtimeMs = Date.now();
+  fs.appendFileSync(filePath, `\n// Update by ${mtimeMs}\n`);
+  // const content = await fs.readFileAsync(filePath, { encoding: 'utf-8' });
+  return mtimeMs;
+} 
+
 (async () => {
   try {
     const filenames = await fs.readdirAsync('./docs');
@@ -22,16 +29,14 @@ let content = `# [博客地址](https://github.com/AfterThreeYears/blog)
     const mdStats = [];
     for (let i = 0; i < mds.length; i += 1) {
       const mdFile = mds[i];
-      const stats = await fs.statAsync(resolve(__dirname, 'docs', mdFile));
-      mdStats.push({ mdFile, stats });
+      const mdFilePath = resolve(__dirname, 'docs', mdFile);
+      const mtimeMs = await getMtimeMs(mdFilePath);
+      mdStats.push({ mdFile, mtimeMs });
     }
     content += mdStats
-      .sort((a, b) => b.stats.mtimeMs - a.stats.mtimeMs)
-      .map(({ mdFile, stats }) => {
-        const mtimeStr = dayjs(stats.mtime).format(formatTime);
-        const mdUrl = `${gitUrl}/${encodeURIComponent(mdFile)}`;
-        return `|[${mdFile}](${mdUrl})|${mtimeStr}|`;
-      }).join('\n');
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+      .map(({ mdFile, mtimeMs }) => `|[${mdFile}](${gitUrl}/${encodeURIComponent(mdFile)})|${dayjs(mtimeMs).format(formatTime)}|`)
+      .join('\n');
 
     await fs.writeFileAsync(resolve(__dirname, 'README.md'), content);
   } catch (error) {

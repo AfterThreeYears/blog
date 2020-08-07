@@ -117,3 +117,6 @@ if (cache && typeof cache.clear === 'function') {
 
  https://github.com/sindresorhus/mem/issues/14 
  这里修复了这个问题
+// Update by 1596788110967
+
+// Update by 1596788197759

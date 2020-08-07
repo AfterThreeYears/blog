@@ -122,3 +122,6 @@ return res;
 ```
 
 已经向作者提交[merge request](https://github.com/jonschlinkert/array-last/pull/9)
+// Update by 1596788110968
+
+// Update by 1596788197759
