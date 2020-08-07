@@ -27,10 +27,6 @@
     "bluebird": "^3.5.1",
     "dayjs": "^1.7.5",
     "is-sorted": "^1.0.4",
-    "mkdirp": "^0.5.1",
-    "pre-commit": "^1.2.2"
-  },
-  "pre-commit": [
-    "deploy"
-  ]
+    "mkdirp": "^0.5.1"
+  }
 }
