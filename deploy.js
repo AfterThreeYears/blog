@@ -47,7 +47,7 @@ function sortMDFile(newUpdate) {
 
 async function writeREADMETemplate(MDFileSortedArray) {
   const formatTime = 'YYYY-MM-DD HH:mm:ss';
-  const gitUrl = 'https://github.com/AfterThreeYears/blog/blob/master';
+  const gitUrl = 'https://github.com/AfterThreeYears/blog/blob/master/docs';
   let content = `# [博客地址](https://github.com/AfterThreeYears/blog)
   | 文章 | 修改时间 |
   |:---|:------------|
