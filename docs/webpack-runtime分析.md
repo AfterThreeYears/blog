@@ -1,6 +1,6 @@
 `解析源码版本` [webpack@4.44.1](https://github.com/webpack/webpack/releases/tag/v4.44.1)
 
-### 从一个例子出发
+## 基础模块加载
 
 大家都用过webpack进行web开发的编译打包工作，但是有没有发现哪怕是一个很简单的js脚本，webpack编译出来的产物实际上会比较大，例如以下配置
 
@@ -151,7 +151,7 @@ Entrypoint main = main.js
 
 ## 动态加载模块
 
-首先修改index.js的内容为一下
+首先修改index.js的内容
 
 ```js
 import('./bar')
