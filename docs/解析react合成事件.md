@@ -1,4 +1,4 @@
-# 解析React合成事件
+# 深入学习React合成事件
 
 *以下分析基于React, ReactDOM 16.13.1版本*
 
@@ -20,7 +20,7 @@ export default class Dialog extends React.PureComponent {
     });
   };
   handleClickButton = (e) => {
-    e.stopPropagation();
+    e.nativeEvent.stopPropagation();
     this.setState({
       showBox: true
     });
@@ -30,7 +30,7 @@ export default class Dialog extends React.PureComponent {
       <div>
         <button onClick={this.handleClickButton}>点击我显示弹窗</button>
         {this.state.showBox && (
-          <div onClick={(e) => e.stopPropagation()}>我是弹窗</div>
+          <div onClick={(e) => e.nativeEvent.stopPropagation()}>我是弹窗</div>
         )}
       </div>
     );
@@ -134,7 +134,7 @@ function legacyListenToEvent(registrationName, mountAt) {
 }
 ```
 registrationNameDependencies数据结构如图
-<image src="../image/registrationNameDependencies.png" />
+<image src="../image/registrationNameDependencies.png" width="600" />
 
 在legacyListenToEvent函数中首先通过获取document节点上监听的事件名称Map对象，然后去通过绑定在jsx上的事件名称，例如onClick来获取到真实的事件名称，例如click，依次进行legacyListenToTopLevelEvent方法的调用
 
@@ -225,7 +225,8 @@ function dispatchEventForLegacyPluginEventSystem(topLevelType, eventSystemFlags,
 
 接下来的分析中我们就来解决这几个问题，首先看到dispatchEvent函数,忽略掉其他分支会发现实际调用的是dispatchEventForLegacyPluginEventSystem函数, 他首先通过callbackBookkeepingPool中获取一个bookKeeping对象，然后调用handleTopLevel函数，在调用结束的时候吧bookKeeping对象放回到callbackBookkeepingPool中，实现了内存复用。
 
-bookKeeping对象的结构如图
+*bookKeeping对象的结构如图*
+
 <image src="../image/bookkeeping.png" />
 
 
@@ -406,16 +407,148 @@ listenerAtPhase中首先通过原生事件名和当前执行的阶段（捕获�
 
 通常我们写事件绑定的时候会在页面卸载的时候进行事件的解绑，但是在React中，框架本身由于只会在document上进行每种事件最多一次的绑定，所以并不会进行事件的解绑。
 
-## React17
-
-17事件有什么改变
-
 ## 批量更新
 
-更新上下文，和直接绑定除了事件委托还有什么区别
+当然如果我们使用React提供的事件，而不是使用我们自己绑定的原生事件除了会进行事件委托以外还有什么优势呢？
+再来看一个例子
+
+```js
+export default class EventBatchUpdate extends React.PureComponent<> {
+  button = null;
+  constructor(props) {
+    super(props);
+    this.state = {
+      count: 0
+    };
+    this.button = React.createRef();
+  }
+  componentDidMount() {
+    this.button.current.addEventListener(
+      "click",
+      this.handleNativeClickButton,
+      false
+    );
+  }
+  handleNativeClickButton = () => {
+    this.setState((preState) => ({ count: preState.count + 1 }));
+    this.setState((preState) => ({ count: preState.count + 1 }));
+  };
+  handleClickButton = () => {
+    this.setState((preState) => ({ count: preState.count + 1 }));
+    this.setState((preState) => ({ count: preState.count + 1 }));
+  };
+  render() {
+    console.log("update");
+    return (
+      <div>
+        <h1>legacy event</h1>
+        <button ref={this.button}>native event add</button>
+        <button onClick={this.handleClickButton}>react event add</button>
+        {this.state.count}
+      </div>
+    );
+  }
+}
+
+```
+在线demo地址：https://codesandbox.io/s/legacy-event-kjngx?file=/src/App.tsx:0-1109
+
+<img width="300" src="../image/legacy_event_1.png" />
+
+首先点击第一个按钮，发现有两个update被打印出，意味着被render了两次。
+
+<img width="300" src="../image/legacy_event_2.png" />
+
+首先点击第二个按钮，只有一个update被打印出来。
+
+会发现通过React事件内多次调用setState，会自动合并多个State，但是在原生事件绑定上默认并不会进行合并多个State，那么有什么手段能解决这个问题呢？
+
+1. 通过batchUpdate函数来手动声明运行上下文。
+```js
+  handleNativeClickButton = () => {
+    ReactDOM.unstable_batchedUpdates(() => {
+      this.setState((preState) => ({ count: preState.count + 1 }));
+      this.setState((preState) => ({ count: preState.count + 1 }));
+    });
+  };
+```
+在线demo地址：https://codesandbox.io/s/legacy-eventbatchupdate-smisq?file=/src/App.tsx:519-749
+
+<img width="300" src="../image/legacy_event_1.png" />
+
+首先点击第一个按钮，只有一个update被打印出来。
+
+<img width="300" src="../image/legacy_event_2.png" />
+
+首先点击第二个按钮，还是只有一个update被打印出来。
+
+2. 启用concurrent mode的情况。（目前不推荐，未来的方案）
+```js
+import ReactDOM from "react-dom";
+
+const root = ReactDOM.unstable_createRoot(document.getElementById("root"));
+root.render(<App />);
+```
+在线demo地址：https://codesandbox.io/s/concurrentevent-9oxoi?file=/src/index.js:0-224
+
+会发现不需要修改任何代码，只需要开启concurrent模式，就会自动进行setState的合并。
+
+<img width="300" src="../image/concurrent_event_1.png" />
+
+首先点击第一个按钮，只有一个update被打印出来。
+
+<img width="300" src="../image/concurrent_event_2.png" />
+
+首先点击第二个按钮，还是只有一个update被打印出来。
+
+## React17中的事件改进
+
+在最近发布的react17版本中，对事件系统了一些改动，和16版本里面的实现有了一些区别，我们就来了解一下17中更新的点。
+
+1. 更改事件委托
+ - 首先第一个修改点就是更改了事件委托绑定节点，在16版本中，React都会把事件绑定到页面的document元素上，这在多个react版本共存的情况下就会虽然某个节点上的函数调用了e.stopPropagation(),但还是会导致另外一个react版本上绑定的事件没有被阻止触发，所以在17版本中会把事件绑定到render函数的节点上。
+
+2. 去除事件池
+ - 17版本中移除了 “event pooling（事件池）“，这是因为 React 在旧浏览器中重用了不同事件的事件对象，以提高性能，并将所有事件字段在它们之前设置为 null。在 React 16 及更早版本中，使用者必须调用 e.persist() 才能正确的使用该事件，或者正确读取需要的属性。
+
+3. 对标浏览器
+ - onScroll 事件不再冒泡，以防止出现常见的混淆。
+ - react 的 onFocus 和 onBlur 事件已在底层切换为原生的 focusin 和 focusout 事件。它们更接近 React 现有行为，有时还会提供额外的信息。
+ - 捕获事件（例如，onClickCapture）现在使用的是实际浏览器中的捕获监听器。
 
 ## 问题解答
 
-16中怎么做
+现在让我们回到最开始的例子中，来看这个问题如何被修复
 
-17中怎么做
+ - 16版本修复方法一
+
+```js
+  handleClickButton = (e: React.MouseEvent) => {
+    e.nativeEvent.stopImmediatePropagation();
+    ...
+  };
+```
+
+ 我们知道react事件绑定的时刻是在reconciliation阶段，会在原生事件的绑定前，那么可以通过调用e.nativeEvent.stopImmediatePropagation();
+ 来进行document后续事件的阻止。
+
+在线demo地址：https://codesandbox.io/s/v16fixevent1-wb8m7
+
+ - 16版本修复方法二
+
+  ```js
+    window.addEventListener("click", this.handleClickBody, false);
+  ```
+
+  另外一个方法就是在16版本中事件会被绑定在document上，所以只要把原生事件绑定在window上，并且调用e.nativeEvent.stopPropagation();来阻止事件冒泡到window上即可修复。
+
+在线demo地址：https://codesandbox.io/s/v16fixevent2-4e2b5
+
+ - React17版本修复方法
+
+  在17版本中react事件并不会绑定在document上，所以并不需要修改任何代码，即可修复这个问题。
+
+在线demo地址：https://codesandbox.io/s/v17fixevent-wzsw5
+
+## 总结
+  我们通过一个经典的例子入手，自顶而下来分析React源码中事件的实现方式，了解事件的设计思想，最后给出多种的解决方案，能够在繁杂的业务中挑选最合适的技术方案来进行实践。
