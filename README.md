@@ -1,7 +1,7 @@
 # [博客地址](https://github.com/AfterThreeYears/blog)
   | 文章 | 修改时间 |
   |:---|:------------|
-  |[解析react合成事件.md](https://github.com/AfterThreeYears/blog/blob/master/docs/%E8%A7%A3%E6%9E%90react%E5%90%88%E6%88%90%E4%BA%8B%E4%BB%B6.md)|2020-09-19 22:18:06|
+  |[解析react合成事件.md](https://github.com/AfterThreeYears/blog/blob/master/docs/%E8%A7%A3%E6%9E%90react%E5%90%88%E6%88%90%E4%BA%8B%E4%BB%B6.md)|2020-09-20 09:55:19|
 |[webview和bridge.md](https://github.com/AfterThreeYears/blog/blob/master/docs/webview%E5%92%8Cbridge.md)|2020-09-19 22:18:06|
 |[webpack初始化配置.md](https://github.com/AfterThreeYears/blog/blob/master/docs/webpack%E5%88%9D%E5%A7%8B%E5%8C%96%E9%85%8D%E7%BD%AE.md)|2020-09-16 10:09:02|
 |[webpack编译阶段.md](https://github.com/AfterThreeYears/blog/blob/master/docs/webpack%E7%BC%96%E8%AF%91%E9%98%B6%E6%AE%B5.md)|2020-09-16 10:09:02|
