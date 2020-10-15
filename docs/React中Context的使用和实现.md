@@ -138,6 +138,30 @@ function push<T>(cursor: StackCursor<T>, value: T, fiber: Fiber): void {
 
 在React中，定义了一个Stack，用来保存遍历Fiber时候的上下文，在beginWork往栈里推入多种类型的数据，在completeWork时候弹出数据，这是保证Context工作的基本条件。
 
+```js
+const TestContext = React.createContext<string>('');
+
+function Test() {
+  return (
+    <TestContext.Provider value="before">
+      <TestContext.Provider value="after">
+        <Child />
+      </TestContext.Provider>
+      <Child />
+    </TestContext.Provider>
+  );
+}
+
+function Child() {
+  const value = useContext(TestContext);
+  return <span>{value}</span>;
+}
+```
+
+<img src="../image/repeat-provider.png" />
+
+
+可以来看上面这个例子，如果不定义这个Stack的话，由于fiber的遍历顺序是深度优先，那么顺序为TestContextFiber(before) -> TestContextFiber(after) 这个时候值被修改为了after -> 内部的ChildFiber -> 外部的的ChildFiber，会导致内外Child内的值都是after;
 
 ## Context调用
 

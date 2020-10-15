@@ -4,6 +4,7 @@
   "description": "https://github.com/AfterThreeYears/blog/issues",
   "main": "index.js",
   "scripts": {
+    "deploy:test": "node deploy.js",
     "deploy": "sh deploy.sh"
   },
   "repository": {
