@@ -1,8 +1,7 @@
 # [博客地址](https://github.com/AfterThreeYears/blog)
   | 文章 | 修改时间 |
   |:---|:------------|
-  |[React中的调度算法.md](https://github.com/AfterThreeYears/blog/blob/master/docs/React%E4%B8%AD%E7%9A%84%E8%B0%83%E5%BA%A6%E7%AE%97%E6%B3%95.md)|2020-10-29 17:47:01|
-|[ReactDOM#render工作机制.md](https://github.com/AfterThreeYears/blog/blob/master/docs/ReactDOM%23render%E5%B7%A5%E4%BD%9C%E6%9C%BA%E5%88%B6.md)|2020-10-16 17:55:04|
+  |[ReactDOM#render工作机制.md](https://github.com/AfterThreeYears/blog/blob/master/docs/ReactDOM%23render%E5%B7%A5%E4%BD%9C%E6%9C%BA%E5%88%B6.md)|2020-10-16 17:55:04|
 |[React中Context的使用和实现.md](https://github.com/AfterThreeYears/blog/blob/master/docs/React%E4%B8%ADContext%E7%9A%84%E4%BD%BF%E7%94%A8%E5%92%8C%E5%AE%9E%E7%8E%B0.md)|2020-10-06 17:46:00|
 |[webpack初始化配置.md](https://github.com/AfterThreeYears/blog/blob/master/docs/webpack%E5%88%9D%E5%A7%8B%E5%8C%96%E9%85%8D%E7%BD%AE.md)|2020-09-16 10:09:02|
 |[webpack编译阶段.md](https://github.com/AfterThreeYears/blog/blob/master/docs/webpack%E7%BC%96%E8%AF%91%E9%98%B6%E6%AE%B5.md)|2020-09-16 10:09:02|

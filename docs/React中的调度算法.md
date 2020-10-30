@@ -58,7 +58,7 @@ task();
 
 前面说过调度主要是用来拆分diff操作，那么也就是说什么时候会进行diff，能够引起diff的操作只有触发更新，在React中触发更新的操作分别有ReactDOM.render, setState, forceUpdate, useState, useReducer, 一起来这些方法看看有什么共同点
 
-## 启动调度
+## 引发调度
 
 render
  - 在ReactDOM#render工作机制.md中分析过，最终会调用scheduleUpdateOnFiber来启动调度
@@ -69,7 +69,7 @@ setState, forceUpdate
 
 综上所述调度的开始是在scheduleUpdateOnFiber，让我们来看下scheduleUpdateOnFiber
 
-## 调度入口
+## 开始调度
 
 ```js
 export function scheduleUpdateOnFiber(
@@ -156,107 +156,66 @@ scheduleSyncCallback <-----SYNC----- ensureRootIsScheduled <-----ASYNC----- sche
         
 ```
 
-## TODO
+首先从scheduleUpdateOnFiber调用中expirationTime无论是不是Sync最终都会调用到ensureRootIsScheduled函数，接下去ensureRootIsScheduled中会根据当前的运行环境（同步，异步）来决定调用scheduleSyncCallback或者scheduleCallback，
+通过观察scheduleSyncCallback和scheduleCallback函数的实现来看内部都是会去调用Scheduler_scheduleCallback这个函数，唯一的区别则是scheduleCallback传入的第一个参数是通过当前的expirationTime去计算出一个优先级，而scheduleSyncCallback传入的优先级则是Scheduler_ImmediatePriority，也就是-1，表示立即同步回调函数，Scheduler_scheduleCallback在这里可以简单的理解为如果传入-1则同步调用回调函数，传入其他数字则等待数字需要的时间后，异步调用setTimeout执行回调，在后面会详细分析Scheduler_scheduleCallback到底做了哪些事情？
 
-```js
-function timeoutForPriorityLevel(priorityLevel) {
-  switch (priorityLevel) {
-    case ImmediatePriority:
-      return IMMEDIATE_PRIORITY_TIMEOUT;
-    case UserBlockingPriority:
-      return USER_BLOCKING_PRIORITY_TIMEOUT;
-    case IdlePriority:
-      return IDLE_PRIORITY_TIMEOUT;
-    case LowPriority:
-      return LOW_PRIORITY_TIMEOUT;
-    case NormalPriority:
-    default:
-      return NORMAL_PRIORITY_TIMEOUT;
-  }
+## 最小堆
+
+在深入Scheduler_scheduleCallback之前先来了解一个数据结构堆，堆是一种二叉树，所以也符合二叉树的一些特效，比如说有个节点n(n>=1), n >> 1，是这个节点的父节点， n * 2是这个节点的左子节点，n * 2 + 1是这个节点的右子节点，堆还可以扩展出来最大堆和最小堆，最大堆表示每一个父节点都会大于它的两个子节点，而最小堆则相反，每一个父节点都小于它的两个子节点，通过这个特性，能够实现一个动态的优先级队列，并且时间复杂度是logn,是一种很优秀的数据结构
+
+在js中我们可以通过数组来实现这个数据结构,根据规范我们可以定义出这样一组接口，具体实现在这里不赘述，网络上有很多算法实现
+```ts
+interface HeapNode<T> {
+    value: T;
+    sortIndex: T;
 }
 
-```
+type Compare = (a: HeapNode<string>, b: HeapNode<string>) => boolean;
 
-```js
-export function push(heap: Heap, node: Node): void {
-  const index = heap.length;
-  heap.push(node);
-  siftUp(heap, node, index);
-}
-
-export function peek(heap: Heap): Node | null {
-  const first = heap[0];
-  return first === undefined ? null : first;
-}
-
-export function pop(heap: Heap): Node | null {
-  const first = heap[0];
-  if (first !== undefined) {
-    const last = heap.pop();
-    if (last !== first) {
-      heap[0] = last;
-      siftDown(heap, last, 0);
+abstract class Heap<T> {
+    private compare: Compare;
+    constructor(compare: Compare) {
+        this.compare = compare;
     }
-    return first;
-  } else {
-    return null;
-  }
-}
+    abstract peek(): HeapNode<T>;
 
-function siftUp(heap, node, i) {
-  let index = i;
-  while (true) {
-    const parentIndex = (index - 1) >>> 1;
-    const parent = heap[parentIndex];
-    if (parent !== undefined && compare(parent, node) > 0) {
-      // The parent is larger. Swap positions.
-      heap[parentIndex] = node;
-      heap[index] = parent;
-      index = parentIndex;
-    } else {
-      // The parent is smaller. Exit.
-      return;
-    }
-  }
-}
+    abstract pop(): HeapNode<T>;
+    abstract siftDown(n: number): void;
 
-function siftDown(heap, node, i) {
-  let index = i;
-  const length = heap.length;
-  while (index < length) {
-    const leftIndex = (index + 1) * 2 - 1;
-    const left = heap[leftIndex];
-    const rightIndex = leftIndex + 1;
-    const right = heap[rightIndex];
+    abstract push(node: HeapNode<T>): void;
+    abstract siftUp(n: number): void;
 
-    // If the left or right node is smaller, swap with the smaller of those.
-    if (left !== undefined && compare(left, node) < 0) {
-      if (right !== undefined && compare(right, left) < 0) {
-        heap[index] = right;
-        heap[rightIndex] = node;
-        index = rightIndex;
-      } else {
-        heap[index] = left;
-        heap[leftIndex] = node;
-        index = leftIndex;
-      }
-    } else if (right !== undefined && compare(right, node) < 0) {
-      heap[index] = right;
-      heap[rightIndex] = node;
-      index = rightIndex;
-    } else {
-      // Neither child is smaller. Exit.
-      return;
-    }
-  }
-}
+    abstract parent(n: number): number;
+    abstract left(n: number): number;
+    abstract right(n: number): number;
 
-function compare(a, b) {
-  // Compare sort index first, then task id.
-  const diff = a.sortIndex - b.sortIndex;
-  return diff !== 0 ? diff : a.id - b.id;
+    abstract swap(n: number, m: number): void;
+    abstract toString(): string;
+    abstract size(): number;
+
+    abstract heapify(nodes: HeapNode<T>[], compare: Compare): Heap<T>;
 }
 ```
+其中通过peek来查看堆顶的节点，pop来弹出堆顶的节点，push来增加新的节点
+
+有一组初始值[5, 4, 3, 2, 1]，通过我们小堆化以后会这样的一个结构
+```js
+          1
+      2       4
+    5   3
+```
+
+接下去插入新一个的节点0,通过上浮最终会出现以下结构
+
+```js
+          0
+      2       1
+    5   3   4
+```
+
+能够发现和React所需要的优先级最高，最紧急的任务在堆顶，并且每一次只会拿一个任务的要求是一致的，所以React在任务队列上使用了最小堆来实现。
+
+## 调度过程
 
 ```js
 function unstable_scheduleCallback(priorityLevel, callback, options) {
@@ -416,8 +375,10 @@ function workLoop(hasTimeRemaining, initialTime) {
     return false;
   }
 }
-
 ```
+
+## 调度实现
+
 
 ```js
   const performance = window.performance;
