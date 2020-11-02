@@ -60,12 +60,15 @@ task();
 
 ## 引发调度
 
-render
+**render**
  - 在ReactDOM#render工作机制.md中分析过，最终会调用scheduleUpdateOnFiber来启动调度
-setState, forceUpdate
- - 通过一系列手段（不是本文重点，所以略过）得知会分别在enqueueSetState， enqueueReplaceState中调用scheduleUpdateOnFiber
- - useState, useReducer
-    useState其实底层是useReducer，所以只需要看useReducer,在dispatchAction函数中也会发现调用了scheduleUpdateOnFiber
+
+**setState, forceUpdate**
+ - 通过一系列手段（不是本文重点，所以略过）得知会分别在enqueueSetState， enqueueReplaceState中调用
+ scheduleUpdateOnFiber
+ 
+**useState, useReducer**
+  - useState其实底层是useReducer，所以只需要看useReducer,在dispatchAction函数中也会发现调用了scheduleUpdateOnFiber
 
 综上所述调度的开始是在scheduleUpdateOnFiber，让我们来看下scheduleUpdateOnFiber
 
@@ -218,6 +221,12 @@ abstract class Heap<T> {
 ## 调度过程
 
 ```js
+let taskIdCounter = 1;
+// 延时任务堆
+const timerQueue = [];
+// 实时任务堆
+const taskQueue = [];
+
 function unstable_scheduleCallback(priorityLevel, callback, options) {
   var currentTime = getCurrentTime();
 
@@ -249,26 +258,19 @@ function unstable_scheduleCallback(priorityLevel, callback, options) {
     expirationTime,
     sortIndex: -1,
   };
+  // 延时任务
   if (startTime > currentTime) {
-    // This is a delayed task.
     newTask.sortIndex = startTime;
     push(timerQueue, newTask);
+    // 无实时任务并且当前这个任务等同于延时任务中堆顶的任务，启动延时调度，等待时间为当前时间和延时任务启动时间之间的时间差
     if (peek(taskQueue) === null && newTask === peek(timerQueue)) {
-      // All tasks are delayed, and this is the task with the earliest delay.
-      if (isHostTimeoutScheduled) {
-        // Cancel an existing timeout.
-        cancelHostTimeout();
-      } else {
-        isHostTimeoutScheduled = true;
-      }
-      // Schedule a timeout.
+      // ...
       requestHostTimeout(handleTimeout, startTime - currentTime);
     }
   } else {
+    // 有实时任务的情况，调度实时任务
     newTask.sortIndex = expirationTime;
     push(taskQueue, newTask);
-    // Schedule a host callback, if needed. If we're already performing work,
-    // wait until the next time we yield.
     if (!isHostCallbackScheduled && !isPerformingWork) {
       isHostCallbackScheduled = true;
       requestHostCallback(flushWork);
@@ -278,96 +280,55 @@ function unstable_scheduleCallback(priorityLevel, callback, options) {
   return newTask;
 }
 
-
 function flushWork(hasTimeRemaining, initialTime) {
-
-  // We'll need a host callback the next time work is scheduled.
-  isHostCallbackScheduled = false;
-  if (isHostTimeoutScheduled) {
-    // We scheduled a timeout but it's no longer needed. Cancel it.
-    isHostTimeoutScheduled = false;
-    cancelHostTimeout();
-  }
-
-  isPerformingWork = true;
-  const previousPriorityLevel = currentPriorityLevel;
-  try {
-    {
-      // No catch in prod codepath.
-      return workLoop(hasTimeRemaining, initialTime);
-    }
-  } finally {
-    currentTask = null;
-    currentPriorityLevel = previousPriorityLevel;
-    isPerformingWork = false;
-  }
-}
-
-function workLoop(hasTimeRemaining, initialTime) {
-  let currentTime = initialTime;
-  advanceTimers(currentTime);
   // ...
-}
-
-function advanceTimers(currentTime) {
-  // Check for tasks that are no longer delayed and add them to the queue.
-  let timer = peek(timerQueue);
-  while (timer !== null) {
-    if (timer.callback === null) {
-      // Timer was cancelled.
-      pop(timerQueue);
-    } else if (timer.startTime <= currentTime) {
-      // Timer fired. Transfer to the task queue.
-      pop(timerQueue);
-      timer.sortIndex = timer.expirationTime;
-      push(taskQueue, timer);
-    } else {
-      // Remaining timers are pending.
-      return;
-    }
-    timer = peek(timerQueue);
+  try {
+    return workLoop(hasTimeRemaining, initialTime);
+  } finally {
+    // ...
   }
 }
 
 function workLoop(hasTimeRemaining, initialTime) {
   let currentTime = initialTime;
+  // 查询延时任务里是否有到期的任务，有的话从延时堆里踢出，塞入实时堆
   advanceTimers(currentTime);
   currentTask = peek(taskQueue);
-  while (
-    currentTask !== null &&
-    !(enableSchedulerDebugging && isSchedulerPaused)
-  ) {
+  while (currentTask !== null) {
     if (
       currentTask.expirationTime > currentTime &&
       (!hasTimeRemaining || shouldYieldToHost())
     ) {
-      // This currentTask hasn't expired, and we've reached the deadline.
+      // 任务还未过期，但是这个tick的时间片已经用完了，先跳过这个任务
       break;
     }
     const callback = currentTask.callback;
     if (callback !== null) {
       currentTask.callback = null;
       currentPriorityLevel = currentTask.priorityLevel;
+      // 类似于requestIdleCallback的didTimeout参数，用于判断这个任务是否过期了
       const didUserCallbackTimeout = currentTask.expirationTime <= currentTime;
-      const continuationCallback = callback(didUserCallbackTimeout);
+      callback(didUserCallbackTimeout);
       currentTime = getCurrentTime();
-      if (typeof continuationCallback === 'function') {
-        currentTask.callback = continuationCallback;
-      } else {
+      {
+        // 任务节点执行结束，弹出对应的任务节点
         if (currentTask === peek(taskQueue)) {
           pop(taskQueue);
         }
       }
+      // 查询延时任务里是否有到期的任务，有的话从延时堆里踢出，塞入实时堆
       advanceTimers(currentTime);
     } else {
-      pop(taskQueue);
+      // ...
     }
+    // 获取下一个任务节点
     currentTask = peek(taskQueue);
   }
-  // Return whether there's additional work
   if (currentTask !== null) {
+    // 实时任务堆还没空
     return true;
   } else {
+    // 实时任务堆空了，延迟任务堆需要自己调度自己
     const firstTimer = peek(timerQueue);
     if (firstTimer !== null) {
       requestHostTimeout(handleTimeout, firstTimer.startTime - currentTime);
@@ -377,24 +338,24 @@ function workLoop(hasTimeRemaining, initialTime) {
 }
 ```
 
-## 调度实现
+首先介绍一个在调度过程中主要有两个任务堆，分别是实时任务堆和延时任务堆，无delay参数的任务都会被放入实时任务堆中，反之会被推入延时任务堆，延时任务堆的意义主要是在有长时间delay的任务，能够减少无用postMessage递归调用。
 
+接下来看下以上函数的调用流程，在unstable_scheduleCallback会传入当前任务的优先级，回调函数，以及额外的选项，内部会根据传入的优先级或者额外选项中的timeout或者delay来设置任务的expirationTime，接着通过startTime来确定当前任务是否要放入实时任务堆中还是延时任务堆中，如果是延迟任务，那么会放入延迟任务堆，并且根据是否有实时任务可以调度并且当前任务是延时任务堆中优先级最高的，那么使用setTimeout来进行调度；如果是实时任务则会推入实时任务堆，接着调用requestHostCallback来调度workLoop，workLoop会从堆顶取出优先级最高的任务，接着查看当前时间片是否还有时间并且当前这个任务是否过期，如果任务还未过期但是没有时间片了，就会先交出控制权限给浏览器，等待下一次调用；如果任务已经过期了，那么需要马上执行该任务，执行结束后查看实时任务堆是否还有任务，就赋值给currentTask，返回true，表示还有任务需要调度；如果实时任务空了，那么会去调度延时任务堆，返回false，表示当下任务已经全部结束。
+
+workLoop这个函数是异步进行调用，这里requestHostCallback就是用来将workLoop添加到下一个宏任务，使得最终的回调在下一个时间循环才会执行
+
+## requestHostCallback实现
 
 ```js
   const performance = window.performance;
-  const setTimeout = window.setTimeout;
-  const clearTimeout = window.clearTimeout;
 
   getCurrentTime = () => performance.now();
 
   let isMessageLoopRunning = false;
   let scheduledHostCallback = null;
-  let taskTimeoutID = -1;
 
   let yieldInterval = 5;
   let deadline = 0;
-
-  let needsPaint = false;
 
   const shouldYieldToHost = function() {
       return getCurrentTime() >= deadline;
@@ -403,7 +364,6 @@ function workLoop(hasTimeRemaining, initialTime) {
   const performWorkUntilDeadline = () => {
     if (scheduledHostCallback !== null) {
       const currentTime = getCurrentTime();
-      // Yield after `yieldInterval` ms, regardless of where we are in the vsync
       deadline = currentTime + yieldInterval;
       const hasTimeRemaining = true;
       try {
@@ -415,19 +375,15 @@ function workLoop(hasTimeRemaining, initialTime) {
           isMessageLoopRunning = false;
           scheduledHostCallback = null;
         } else {
-          // If there's more work, schedule the next message event at the end
           port.postMessage(null);
         }
       } catch (error) {
-        // If a scheduler task throws, exit the current browser task so the
         port.postMessage(null);
         throw error;
       }
     } else {
       isMessageLoopRunning = false;
     }
-    // Yielding to the browser will give it a chance to paint, so we can
-    needsPaint = false;
   };
 
   const channel = new MessageChannel();
@@ -445,15 +401,14 @@ function workLoop(hasTimeRemaining, initialTime) {
   cancelHostCallback = function() {
     scheduledHostCallback = null;
   };
-
-  requestHostTimeout = function(callback, ms) {
-    taskTimeoutID = setTimeout(() => {
-      callback(getCurrentTime());
-    }, ms);
-  };
-
-  cancelHostTimeout = function() {
-    clearTimeout(taskTimeoutID);
-    taskTimeoutID = -1;
-  };
 ```
+
+requestHostCallback内部通过MessageChanel的api来根据workLoop的返回值来决定是否要递归调用performWorkUntilDeadline，从而把每一个任务分散到浏览器的每个事件循环中
+
+## 目前生产环境的调度模式
+
+我们目前还是使用ReactDOM.render去进行应用的创建，所以在这种模式下虽然会通过requestHostCallback把回调放到下一个事件循环去执行，但是内部的多个任务并不会被中断，而是一次性在一个时间片中去把所有的任务全部执行完，所以并不是大家认为的当下版本的React已经是可以中断渲染，这点还是需要注意一下，如果想要尝试可中断的React渲染模式，还需要安装实验版本https://zh-hans.reactjs.org/docs/concurrent-mode-intro.html，通过ReactDOM.createRoot进行应用的创建，才是真正官方声称的Concurrent模式，支持可中断，多任务时间片的特性。
+
+## 总结
+
+通过对React Scheduler的分析，我们了解了它是如何把一个个小小的diff任务，通过合作式调度的方案，在多个时间片中调用，不阻塞浏览器的渲染，给用户带去丝滑的浏览体验。
