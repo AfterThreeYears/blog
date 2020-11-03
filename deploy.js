@@ -68,11 +68,10 @@ async function main() {
     // 3. 读取update.json 的内容到update老对象上
     const oldUpdate = await getOldUpdate();
     // 4. 首先把修改过的md文件的路径更新到update新对象上
-    const newUpdate = {};
-    MDFilePath.forEach(path => {
-      if (oldUpdate[path]) return;
-      newUpdate[path] = Date.now();
-    });
+     const newUpdate = MDFilePath.reduce((result, path) => {
+      result[path] = oldUpdate[path] ? oldUpdate[path] : Date.now();
+      return result;
+    }, {});
     // 5. 接下来把所有的路径重新把路径和对应的时间从update老对象更新到update新对象上
     notModifiedMDFilePath.forEach(path => newUpdate[path] = _.isNil(oldUpdate[path]) ? Date.now() : oldUpdate[path]);
     // 6. 把update.json的新对象的内容写入update.json
