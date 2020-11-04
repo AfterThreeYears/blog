@@ -359,7 +359,7 @@ function workLoop(hasTimeRemaining, initialTime) {
 
 ## requestHostCallback实现
 
-`requestHostCallback`内部通过`MessageChanel`来根据`workLoop`的返回值来决定是否要递归调用`performWorkUntilDeadline`，从而把每一个任务分散到浏览器的每个事件循环中，其中在调用performWorkUntilDeadline时，会把当前的时间加上yieldInterval的值（默认为5ms），当做一个时间片可以执行的时间，当前情况下一个时间片的执行时间是5ms，用来让React内部调度知道当前任务是在当下时间片执行还是下一个时间片执行，这里的时间片并不是浏览器的一帧，按照60帧的渲染速率来计算的话，一帧中会有3个多的时间片被执行。最终根据scheduledHostCallback的返回值来决定是否要继续的递归调用performWorkUntilDeadline。
+`requestHostCallback`内部通过`MessageChanel`来根据`workLoop`的返回值来决定是否要递归调用`performWorkUntilDeadline`，从而把每一个任务分散到浏览器的每个事件循环中，其中在调用`performWorkUntilDeadline`时，会把当前的时间加上`yieldInterval`的值（默认为5ms），当做一个时间片可以执行的时间，当前情况下一个时间片的执行时间是5ms，用来让React内部调度知道当前任务是在当下时间片执行还是下一个时间片执行，这里的时间片并不是浏览器的一帧，按照60帧的渲染速率来计算的话，一帧中会有3个多的时间片被执行。最终根据`scheduledHostCallback`的返回值来决定是否要继续的递归调用`performWorkUntilDeadline`。
 
 ```js
   const performance = window.performance;
@@ -420,17 +420,17 @@ function workLoop(hasTimeRemaining, initialTime) {
 
 ## requestIdleCallback
 
-至于为什么不用`requestIdleCallback`替代`requestHostCallback`，而是选择自行选择实现主要原因有以下两点
+至于为什么不用`requestIdleCallback`替代`requestHostCallback`，而是选择自行选择实现主要原因有以下
 
 1. 糟糕的兼容性，在IOS下基本上全军覆没。
-2. 不确定的调用频率，根据官方文档上描述timeRemaining函数最高将会返回50ms，不足以支持流畅的渲染要求。
-3. 除了默认的timeout以外，还扩展了priorityLevel，delay等选项。
+2. 不确定的调用频率，根据官方文档上描述**timeRemaining**函数最高将会返回**50ms**，不足以支持流畅的渲染要求。
+3. 除了默认的`timeout`以外，还扩展了`priorityLevel`，`delay`等选项。
 
-基于以上三点原因能够了解React团队为什么没有选择原生的requestIdleCallback API
+基于以上三点原因React团队为什么没有选择原生的`requestIdleCallback` API
 
 ## 目前生产环境的调度模式
 
-我们目前还是使用`ReactDOM.render`去进行应用的创建，所以在这种模式下虽然会通过`requestHostCallback`把回调放到下一个事件循环去执行，但是内部的多个任务并不会被中断，而是一次性在一个时间片中去把所有的任务全部执行完，所以并不是大家认为的当下版本的React已经是可以中断渲染，这点还是需要注意一下，如果想要尝试可中断的React渲染模式，还需要安装实验版本https://zh-hans.reactjs.org/docs/concurrent-mode-intro.html，通过`ReactDOM.createRoot`进行应用的创建，才是真正官方声称的Concurrent模式，支持可中断，多任务时间片的特性。
+我们目前还是使用`ReactDOM.render`去进行应用的创建，所以在这种模式下虽然会通过`requestHostCallback`把回调放到下一个事件循环去执行，但是内部的多个任务并不会被中断，而是一次性在一个时间片中去把所有的任务全部执行完，所以并不是大家认为的当下版本的React已经是可以中断渲染，这点还是需要注意一下，如果想要尝试可中断的React渲染模式，还需要安装实验版本*https://zh-hans.reactjs.org/docs/concurrent-mode-intro.html*，通过`ReactDOM.createRoot`进行应用的创建，才是真正官方声称的*Concurrent模式*，支持可中断，多任务时间片的特性。
 
 ## 总结
 
