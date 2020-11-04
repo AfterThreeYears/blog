@@ -76,6 +76,26 @@ task();
 
 ## 开始调度
 
+
+
+```js
+                                     scheduleUpdateOnFiber 
+                                              |
+                                              |
+                                              |
+                                              V
+scheduleSyncCallback <-----SYNC----- ensureRootIsScheduled -----ASYNC-----> scheduleCallback
+        |                                                                           |
+        |                                                                           |
+        |                                                                           |
+        |                                                                           |
+        -------------------------> Scheduler_scheduleCallback <----------------------
+        
+```
+
+首先从`scheduleUpdateOnFiber`调用中发现`expirationTime`变量无论是不是`Sync`最终都会调用到ensureRootIsScheduled函数，接下去`ensureRootIsScheduled`中会根据当前的运行环境*（同步还是异步）*来决定调用`scheduleSyncCallback`还是`scheduleCallback`，
+通过观察`scheduleSyncCallback`和`scheduleCallback`函数的实现来看内部都是会去调用`Scheduler_scheduleCallback`这个函数，唯一的区别则是`scheduleCallback`传入的第一个参数是通过当前的expirationTime去计算出的一个优先级，而`scheduleSyncCallback`传入的优先级则是固定写死的`Scheduler_ImmediatePriority`，也就是*-1*，表示立即同步执行回调函数，所以`Scheduler_scheduleCallback`在这里可以理解为如果传入-1则同步调用回调函数，传入其他数字则等待数字需要的时间后，异步调用setTimeout执行回调，在后面会详细分析`Scheduler_scheduleCallback`到底做了哪些事情？
+
 ```js
 export function scheduleUpdateOnFiber(
   fiber: Fiber,
@@ -144,25 +164,6 @@ export function scheduleSyncCallback(callback: SchedulerCallback) {
 }
 
 ```
-
-```js
-以上三个函数调用栈为 
-                                     scheduleUpdateOnFiber 
-                                              |
-                                              |
-                                              |
-                                              V
-scheduleSyncCallback <-----SYNC----- ensureRootIsScheduled -----ASYNC-----> scheduleCallback
-        |                                                                           |
-        |                                                                           |
-        |                                                                           |
-        |                                                                           |
-        -------------------------> Scheduler_scheduleCallback <----------------------
-        
-```
-
-首先从`scheduleUpdateOnFiber`调用中发现`expirationTime`变量无论是不是`Sync`最终都会调用到ensureRootIsScheduled函数，接下去`ensureRootIsScheduled`中会根据当前的运行环境*（同步还是异步）*来决定调用`scheduleSyncCallback`还是`scheduleCallback`，
-通过观察`scheduleSyncCallback`和`scheduleCallback`函数的实现来看内部都是会去调用`Scheduler_scheduleCallback`这个函数，唯一的区别则是`scheduleCallback`传入的第一个参数是通过当前的expirationTime去计算出的一个优先级，而`scheduleSyncCallback`传入的优先级则是固定写死的`Scheduler_ImmediatePriority`，也就是*-1*，表示立即同步执行回调函数，所以`Scheduler_scheduleCallback`在这里可以理解为如果传入-1则同步调用回调函数，传入其他数字则等待数字需要的时间后，异步调用setTimeout执行回调，在后面会详细分析`Scheduler_scheduleCallback`到底做了哪些事情？
 
 ## 小根堆
 
@@ -233,6 +234,10 @@ abstract class Heap<T> {
 ```
 
 ## 调度过程
+
+首先介绍一下在调度过程中主要有两个`任务堆`，分别是`实时任务堆`和`延时任务堆`，无`delay`参数的任务都会被放入`实时任务堆`中，反之会被推入`延时任务堆`，`延时任务堆`的意义主要是在有长时间delay的任务，能够减少无用postMessage递归调用。
+
+接下来看下以上函数的调用流程，在`unstable_scheduleCallback`会传入当前任务的优先级，回调函数，以及额外的选项，内部会根据传入的优先级或者额外选项中的`timeout`或者`delay`来设置任务的`expirationTime`，接着通过`startTime`来确定当前任务是否要放入`实时任务堆`中还是`延时任务堆`中，如果是*延迟任务*，那么会放入`延迟任务堆`，并且根据是否有实时任务可以调度并且当前任务是延时任务堆中优先级最高的，那么使用setTimeout来进行调度；如果是实时任务则会推入`实时任务堆`，接着调用`requestHostCallback`来调用`workLoop`方法，`workLoop`这个函数会被异步进行调用，这里`requestHostCallback`就是用来将`workLoop`添加到下一个宏任务，使得最终的回调在下一个时间循环才会执行,`workLoop`会从`实时任务堆顶`取出优先级最**高**的任务，接下去查看当前浏览器的渲染帧时间内是否还有时间来执行js，并且当前这个任务是否过期，如果任务还未过期但是没有时间了，就会先交出控制权限给浏览器，等待下一次调用；如果任务已经过期了，那么需要马上执行该任务，执行结束后查看`实时任务堆`是否还有任务，有的话就赋值给`currentTask`，返回`true`，表示还有任务需要调度；如果实时任务空了，那么会去调度`延时任务堆`，返回`false`，表示当下任务已经全部结束。
 
 ```js
 let taskIdCounter = 1;
@@ -352,11 +357,9 @@ function workLoop(hasTimeRemaining, initialTime) {
 }
 ```
 
-首先介绍一下在调度过程中主要有两个`任务堆`，分别是`实时任务堆`和`延时任务堆`，无`delay`参数的任务都会被放入`实时任务堆`中，反之会被推入`延时任务堆`，`延时任务堆`的意义主要是在有长时间delay的任务，能够减少无用postMessage递归调用。
-
-接下来看下以上函数的调用流程，在`unstable_scheduleCallback`会传入当前任务的优先级，回调函数，以及额外的选项，内部会根据传入的优先级或者额外选项中的`timeout`或者`delay`来设置任务的`expirationTime`，接着通过`startTime`来确定当前任务是否要放入`实时任务堆`中还是`延时任务堆`中，如果是*延迟任务*，那么会放入`延迟任务堆`，并且根据是否有实时任务可以调度并且当前任务是延时任务堆中优先级最高的，那么使用setTimeout来进行调度；如果是实时任务则会推入`实时任务堆`，接着调用`requestHostCallback`来调用`workLoop`方法，`workLoop`这个函数会被异步进行调用，这里`requestHostCallback`就是用来将`workLoop`添加到下一个宏任务，使得最终的回调在下一个时间循环才会执行,`workLoop`会从`实时任务堆顶`取出优先级最**高**的任务，接下去查看当前浏览器的渲染帧时间内是否还有时间来执行js，并且当前这个任务是否过期，如果任务还未过期但是没有时间了，就会先交出控制权限给浏览器，等待下一次调用；如果任务已经过期了，那么需要马上执行该任务，执行结束后查看`实时任务堆`是否还有任务，有的话就赋值给`currentTask`，返回`true`，表示还有任务需要调度；如果实时任务空了，那么会去调度`延时任务堆`，返回`false`，表示当下任务已经全部结束。
-
 ## requestHostCallback实现
+
+`requestHostCallback`内部通过`MessageChanel`来根据`workLoop`的返回值来决定是否要递归调用`performWorkUntilDeadline`，从而把每一个任务分散到浏览器的每个事件循环中，其中在调用performWorkUntilDeadline时，会把当前的时间加上yieldInterval的值（默认为5ms），当做一个时间片可以执行的时间，当前情况下一个时间片的执行时间是5ms，用来让React内部调度知道当前任务是在当下时间片执行还是下一个时间片执行，这里的时间片并不是浏览器的一帧，按照60帧的渲染速率来计算的话，一帧中会有3个多的时间片被执行。最终根据scheduledHostCallback的返回值来决定是否要继续的递归调用performWorkUntilDeadline。
 
 ```js
   const performance = window.performance;
@@ -415,7 +418,15 @@ function workLoop(hasTimeRemaining, initialTime) {
   };
 ```
 
-`requestHostCallback`内部通过`MessageChanel`的api来根据`workLoop`的返回值来决定是否要递归调用`performWorkUntilDeadline`，从而把每一个任务分散到浏览器的每个事件循环中
+## requestIdleCallback
+
+至于为什么不用`requestIdleCallback`替代`requestHostCallback`，而是选择自行选择实现主要原因有以下两点
+
+1. 糟糕的兼容性，在IOS下基本上全军覆没。
+2. 不确定的调用频率，根据官方文档上描述timeRemaining函数最高将会返回50ms，不足以支持流畅的渲染要求。
+3. 除了默认的timeout以外，还扩展了priorityLevel，delay等选项。
+
+基于以上三点原因能够了解React团队为什么没有选择原生的requestIdleCallback API
 
 ## 目前生产环境的调度模式
 
