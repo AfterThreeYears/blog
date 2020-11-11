@@ -2,155 +2,82 @@
 
 > *以下分析基于React, ReactDOM 16.13.1版本*
 
+## 概览
+
+React的渲染分为三个部分，分别是调度，调和，和提交阶段，之前我们讲完了调度，接下来来说说调和。
+
+首先要明白React在这个阶段做了哪些事情，这个分为两块，分别是初始化和进行更新，其中会有一些不同点
+初始化的目的主要是从单单一个HostRootFiber节点生成一颗全新的Fiber Tree, 能够让它在下一个阶段被渲染到浏览器的页面上，
+更新阶段的目的是为了对比新老的阶段，进行Diff，如果能复用则进行复用，不能复用的则销毁和重新创建对应的节点，这里创建或者复用的节点
+并不会实时更新在创建阶段的Fiber Tree上，而是使用双缓存的技术，通过alternate数学来关联出一颗新的Fiber Tree，当所有的diff结束以后，才会使用新创建的Fiber Tree来替换掉页面上老的Tree。
+
+具体再往下细化一层则是首先会对每个Fiber节点进行创建或者复用的操作，接着下一步才会进行DOM实例的创建或者复用，中间还会夹杂着React组件的初始化等等一系列的动作。
+
+我们知道不论是通过ReactDOM.render还是通过setState创建更新，最终都是调用到performSyncWorkOnRoot函数，它内部主要做了两件事情，对应了上面所说的创建/更新Fiber和提交更新两个任务，创建/更新Fiber对应的函数是renderRootSync,在其中会调用workLoopSync，workLoopSync中会依次对每一个workInProgress（当前正在更新的Fiber节点）进行做相应的工作，并且通过不断的对workInProgress进行赋值来实现依次跑完整个链表上的节点。
 
 ```js
 function performSyncWorkOnRoot(root) {
-  flushPassiveEffects();
-
-  const lastExpiredTime = root.lastExpiredTime;
-
-  let expirationTime;
-  if (lastExpiredTime !== NoWork) {
-    // There's expired work on this root. Check if we have a partial tree
-    // that we can reuse.
-    if (
-      root === workInProgressRoot &&
-      renderExpirationTime >= lastExpiredTime
-    ) {
-      // There's a partial tree with equal or greater than priority than the
-      // expired level. Finish rendering it before rendering the rest of the
-      // expired work.
-      expirationTime = renderExpirationTime;
-    } else {
-      // Start a fresh tree.
-      expirationTime = lastExpiredTime;
-    }
-  } else {
-    // There's no expired work. This must be a new, synchronous render.
-    expirationTime = Sync;
-  }
+  // ...
 
   // 构建完成fiber树，返回值表示是否构建过程中有异常抛出
   let exitStatus = renderRootSync(root, expirationTime);
 
-  if (root.tag !== LegacyRoot && exitStatus === RootErrored) {
-    executionContext |= RetryAfterError;
-
-    // If an error occurred during hydration,
-    // discard server response and fall back to client side render.
-    if (root.hydrate) {
-      root.hydrate = false;
-      clearContainer(root.containerInfo);
-    }
-
-    // If something threw an error, try rendering one more time. We'll
-    // render synchronously to block concurrent data mutations, and we'll
-    // render at Idle (or lower) so that all pending updates are included.
-    // If it still fails after the second attempt, we'll give up and commit
-    // the resulting tree.
-    expirationTime = expirationTime > Idle ? Idle : expirationTime;
-    exitStatus = renderRootSync(root, expirationTime);
-  }
-
-  if (exitStatus === RootFatalErrored) {
-    const fatalError = workInProgressRootFatalError;
-    prepareFreshStack(root, expirationTime);
-    markRootSuspendedAtTime(root, expirationTime);
-    ensureRootIsScheduled(root);
-    throw fatalError;
-  }
-
-  // We now have a consistent tree. Because this is a sync render, we
-  // will commit it even if something suspended.
-  const finishedWork: Fiber = (root.current.alternate: any);
-  root.finishedWork = finishedWork;
-  root.finishedExpirationTime = expirationTime;
-  root.nextKnownPendingLevel = getRemainingExpirationTime(finishedWork);
+  // 进行commit操作
   commitRoot(root);
-
-  // Before exiting, make sure there's a callback scheduled for the next
-  // pending level.
-  ensureRootIsScheduled(root);
 
   return null;
 }
-```
 
-```js
 function renderRootSync(root, expirationTime) {
-  const prevExecutionContext = executionContext;
-  executionContext |= RenderContext;
-  const prevDispatcher = pushDispatcher();
+  workLoopSync();
 
-  // If the root or expiration time have changed, throw out the existing stack
-  // and prepare a fresh one. Otherwise we'll continue where we left off.
-  if (root !== workInProgressRoot || expirationTime !== renderExpirationTime) {
-    prepareFreshStack(root, expirationTime);
-    startWorkOnPendingInteractions(root, expirationTime);
-  }
-
-
-  do {
-    try {
-      workLoopSync();
-      break;
-    } catch (thrownValue) {
-      handleError(root, thrownValue);
-    }
-  } while (true);
-  resetContextDependencies();
-  // if (enableSchedulerTracing) {
-  //   popInteractions(((): Set<Interaction>));
-  // }
-
-  executionContext = prevExecutionContext;
-  popDispatcher(prevDispatcher);
-
-  // if (workInProgress !== null) {
-  //   // This is a sync render, so we should have finished the whole tree.
-  //   invariant(
-  //     false,
-  //     'Cannot commit an incomplete root. This error is likely caused by a ' +
-  //       'bug in React. Please file an issue.',
-  //   );
-  // }
-  // Set this to null to indicate there's no in-progress render.
   workInProgressRoot = null;
-
   return workInProgressRootExitStatus;
 }
 
 function workLoopSync() {
-  // Already timed out, so perform work without checking if we need to yield.
   while (workInProgress !== null) {
     performUnitOfWork(workInProgress);
   }
 }
+
 ```
+
+在performUnitOfWork中有两个函数
+ - beginWork
+    1. 创建阶段： 从零到一创建出Fiber Tree，同时执行组件的生命周期函数，生成出一颗新Fiber Tree
+    2. 更新阶段： 对比新React Element对象和老的Fiber节点进行对比，是否决定复用老Fiber还是重新创建Fiber，最终结果也是生成出一颗新Fiber Tree
+    所以它主要是对类组件和函数组件的初始化
+
+ - completeUnitOfWork
+    当beginWork运行结束以后，并不代表每一个React Element都已经被转换为Fiber节点，也就是并还未被初始化，所以completeWork可以通过先sibling，后return的手段，遍历每一个节点，如果当前是未被BeginWork处理过的节点，还会首先通过BeginWork去处理它，然后就紧接着继续回到
+    completeUnitOfWork中，这个函数主要是对HostComponent和HostText的实例进行props的设置和diff
+
+    创建：对于创建DOM实例，绑定事件，插入到父节点的实例上
+    更新：对比props，diff出不同的props数组，挂载到workInProgress.updateQueue，更新当前节点的副作用，以备用于commit阶段使用
+    主要是用于HostComponent, HostText节点的处理
+
+performUnitOfWork中会根据beginWork返回的next节点是否是null来判断是否已经创建完毕children，需要进入到completeUnitOfWork阶段。
+由于beginWork里逻辑比较多，我们在这里只关心FunctionComponent，ClassComponent，HostRoot，HostComponent，HostText这几个的逻辑，completeUnitOfWork同理，还需要提前指出的一点是在后面的逻辑中通常会用current === null来判断是创建阶段，还是更新阶段，这里会相互交叉着来讲解
 
 ```js
 function performUnitOfWork(unitOfWork: Fiber): void {
-  // The current, flushed, state of this fiber is the alternate. Ideally
-  // nothing should rely on this, but relying on it here means that we don't
-  // need an additional field on the work in progress.
   const current = unitOfWork.alternate;
-
-  let next;
-  {
-    next = beginWork(current, unitOfWork, renderExpirationTime);
-  }
-
+  let next = beginWork(current, unitOfWork, renderExpirationTime);
   unitOfWork.memoizedProps = unitOfWork.pendingProps;
   if (next === null) {
-    // If this doesn't spawn new work, complete the current work.
     completeUnitOfWork(unitOfWork);
   } else {
     workInProgress = next;
   }
-
   ReactCurrentOwner.current = null;
 }
+
 ```
+
+## beginWork
+
+进入到beginWork, 首先看下Fiber节点是否需要更新的策略，如果是创建阶段，didReceiveUpdate被设置为false，而在更新阶段则会通过新老props的对比是否相同，或者是否有遗留的context来设置didReceiveUpdate的值，还可以通过updateExpirationTime和renderExpirationTime的对比来跳过这个节点的更新,didReceiveUpdate会在后面更新是用来决定是否可以跳过更新。
 
 ```js
 function beginWork(
@@ -159,7 +86,6 @@ function beginWork(
   renderExpirationTime: ExpirationTime,
 ): Fiber | null {
   const updateExpirationTime = workInProgress.expirationTime;
-  // 第一次渲染current是null，workInProgress有值
   if (current !== null) {
     const oldProps = current.memoizedProps;
     const newProps = workInProgress.pendingProps;
@@ -168,254 +94,22 @@ function beginWork(
       oldProps !== newProps ||
       hasLegacyContextChanged() ||
     ) {
-      // If props or context changed, mark the fiber as having performed work.
-      // This may be unset if the props are determined to be equal later (memo).
       didReceiveUpdate = true;
     } else if (updateExpirationTime < renderExpirationTime) {
       didReceiveUpdate = false;
-      // This fiber does not have any pending work. Bailout without entering
-      // the begin phase. There's still some bookkeeping we that needs to be done
-      // in this optimized path, mostly pushing stuff onto the stack.
-      switch (workInProgress.tag) {
-        case HostRoot:
-          pushHostRootContext(workInProgress);
-          resetHydrationState();
-          break;
-        case HostComponent:
-          pushHostContext(workInProgress);
-          if (
-            workInProgress.mode & ConcurrentMode &&
-            renderExpirationTime !== Never &&
-            shouldDeprioritizeSubtree(workInProgress.type, newProps)
-          ) {
-            if (enableSchedulerTracing) {
-              markSpawnedWork(Never);
-            }
-            // Schedule this fiber to re-render at offscreen priority. Then bailout.
-            workInProgress.expirationTime = workInProgress.childExpirationTime = Never;
-            return null;
-          }
-          break;
-        case ClassComponent: {
-          const Component = workInProgress.type;
-          if (isLegacyContextProvider(Component)) {
-            pushLegacyContextProvider(workInProgress);
-          }
-          break;
-        }
-        case HostPortal:
-          pushHostContainer(
-            workInProgress,
-            workInProgress.stateNode.containerInfo,
-          );
-          break;
-        case ContextProvider: {
-          const newValue = workInProgress.memoizedProps.value;
-          pushProvider(workInProgress, newValue);
-          break;
-        }
-        case Profiler:
-          if (enableProfilerTimer) {
-            // Profiler should only call onRender when one of its descendants actually rendered.
-            const hasChildWork =
-              workInProgress.childExpirationTime >= renderExpirationTime;
-            if (hasChildWork) {
-              workInProgress.effectTag |= Update;
-            }
-
-            // Reset effect durations for the next eventual effect phase.
-            // These are reset during render to allow the DevTools commit hook a chance to read them,
-            const stateNode = workInProgress.stateNode;
-            stateNode.effectDuration = 0;
-            stateNode.passiveEffectDuration = 0;
-          }
-          break;
-        case SuspenseComponent: {
-          const state: SuspenseState | null = workInProgress.memoizedState;
-          if (state !== null) {
-            if (enableSuspenseServerRenderer) {
-              if (state.dehydrated !== null) {
-                pushSuspenseContext(
-                  workInProgress,
-                  setDefaultShallowSuspenseContext(suspenseStackCursor.current),
-                );
-                // We know that this component will suspend again because if it has
-                // been unsuspended it has committed as a resolved Suspense component.
-                // If it needs to be retried, it should have work scheduled on it.
-                workInProgress.effectTag |= DidCapture;
-
-                return null;
-              }
-            }
-
-            // If this boundary is currently timed out, we need to decide
-            // whether to retry the primary children, or to skip over it and
-            // go straight to the fallback. Check the priority of the primary
-            // child fragment.
-            const primaryChildFragment: Fiber = (workInProgress.child: any);
-            const primaryChildExpirationTime =
-              primaryChildFragment.childExpirationTime;
-            if (primaryChildExpirationTime >= renderExpirationTime) {
-              // The primary children have pending work. Use the normal path
-              // to attempt to render the primary children again.
-              return updateSuspenseComponent(
-                current,
-                workInProgress,
-                renderExpirationTime,
-              );
-            } else {
-              // The primary child fragment does not have pending work marked
-              // on it...
-
-              // ...usually. There's an unfortunate edge case where the fragment
-              // fiber is not part of the return path of the children, so when
-              // an update happens, the fragment doesn't get marked during
-              // setState. This is something we should consider addressing when
-              // we refactor the Fiber data structure. (There's a test with more
-              // details; to find it, comment out the following block and see
-              // which one fails.)
-              //
-              // As a workaround, we need to recompute the `childExpirationTime`
-              // by bubbling it up from the next level of children. This is
-              // based on similar logic in `resetChildExpirationTime`.
-              let primaryChild = primaryChildFragment.child;
-              while (primaryChild !== null) {
-                const childUpdateExpirationTime = primaryChild.expirationTime;
-                const childChildExpirationTime =
-                  primaryChild.childExpirationTime;
-                if (
-                  childUpdateExpirationTime >= renderExpirationTime ||
-                  childChildExpirationTime >= renderExpirationTime
-                ) {
-                  // Found a child with an update with sufficient priority.
-                  // Use the normal path to render the primary children again.
-                  return updateSuspenseComponent(
-                    current,
-                    workInProgress,
-                    renderExpirationTime,
-                  );
-                }
-                primaryChild = primaryChild.sibling;
-              }
-
-              pushSuspenseContext(
-                workInProgress,
-                setDefaultShallowSuspenseContext(suspenseStackCursor.current),
-              );
-              // The primary children do not have pending work with sufficient
-              // priority. Bailout.
-              const child = bailoutOnAlreadyFinishedWork(
-                current,
-                workInProgress,
-                renderExpirationTime,
-              );
-              if (child !== null) {
-                // The fallback children have pending work. Skip over the
-                // primary children and work on the fallback.
-                return child.sibling;
-              } else {
-                return null;
-              }
-            }
-          } else {
-            pushSuspenseContext(
-              workInProgress,
-              setDefaultShallowSuspenseContext(suspenseStackCursor.current),
-            );
-          }
-          break;
-        }
-        case SuspenseListComponent: {
-          const didSuspendBefore =
-            (current.effectTag & DidCapture) !== NoEffect;
-
-          const hasChildWork =
-            workInProgress.childExpirationTime >= renderExpirationTime;
-
-          if (didSuspendBefore) {
-            if (hasChildWork) {
-              // If something was in fallback state last time, and we have all the
-              // same children then we're still in progressive loading state.
-              // Something might get unblocked by state updates or retries in the
-              // tree which will affect the tail. So we need to use the normal
-              // path to compute the correct tail.
-              return updateSuspenseListComponent(
-                current,
-                workInProgress,
-                renderExpirationTime,
-              );
-            }
-            // If none of the children had any work, that means that none of
-            // them got retried so they'll still be blocked in the same way
-            // as before. We can fast bail out.
-            workInProgress.effectTag |= DidCapture;
-          }
-
-          // If nothing suspended before and we're rendering the same children,
-          // then the tail doesn't matter. Anything new that suspends will work
-          // in the "together" mode, so we can continue from the state we had.
-          const renderState = workInProgress.memoizedState;
-          if (renderState !== null) {
-            // Reset to the "together" mode in case we've started a different
-            // update in the past but didn't complete it.
-            renderState.rendering = null;
-            renderState.tail = null;
-            renderState.lastEffect = null;
-          }
-          pushSuspenseContext(workInProgress, suspenseStackCursor.current);
-
-          if (hasChildWork) {
-            break;
-          } else {
-            // If none of the children had any work, that means that none of
-            // them got retried so they'll still be blocked in the same way
-            // as before. We can fast bail out.
-            return null;
-          }
-        }
-      }
       return bailoutOnAlreadyFinishedWork(
         current,
         workInProgress,
         renderExpirationTime,
       );
     } else {
-      // An update was scheduled on this fiber, but there are no new props
-      // nor legacy context. Set this to false. If an update queue or context
-      // consumer produces a changed value, it will set this to true. Otherwise,
-      // the component will assume the children have not changed and bail out.
       didReceiveUpdate = false;
     }
   } else {
     didReceiveUpdate = false;
   }
 
-  // Before entering the begin phase, clear pending update priority.
-  // TODO: This assumes that we're about to evaluate the component and process
-  // the update queue. However, there's an exception: SimpleMemoComponent
-  // sometimes bails out later in the begin phase. This indicates that we should
-  // move this assignment out of the common path and into each branch.
-  workInProgress.expirationTime = NoWork;
-
   switch (workInProgress.tag) {
-    case IndeterminateComponent: {
-      return mountIndeterminateComponent(
-        current,
-        workInProgress,
-        workInProgress.type,
-        renderExpirationTime,
-      );
-    }
-    case LazyComponent: {
-      const elementType = workInProgress.elementType;
-      return mountLazyComponent(
-        current,
-        workInProgress,
-        elementType,
-        updateExpirationTime,
-        renderExpirationTime,
-      );
-    }
     case FunctionComponent: {
       const Component = workInProgress.type;
       const unresolvedProps = workInProgress.pendingProps;
@@ -452,167 +146,24 @@ function beginWork(
       return updateHostComponent(current, workInProgress, renderExpirationTime);
     case HostText:
       return updateHostText(current, workInProgress);
-    case SuspenseComponent:
-      return updateSuspenseComponent(
-        current,
-        workInProgress,
-        renderExpirationTime,
-      );
-    case HostPortal:
-      return updatePortalComponent(
-        current,
-        workInProgress,
-        renderExpirationTime,
-      );
-    case ForwardRef: {
-      const type = workInProgress.type;
-      const unresolvedProps = workInProgress.pendingProps;
-      const resolvedProps =
-        workInProgress.elementType === type
-          ? unresolvedProps
-          : resolveDefaultProps(type, unresolvedProps);
-      return updateForwardRef(
-        current,
-        workInProgress,
-        type,
-        resolvedProps,
-        renderExpirationTime,
-      );
-    }
-    case Fragment:
-      return updateFragment(current, workInProgress, renderExpirationTime);
-    case Mode:
-      return updateMode(current, workInProgress, renderExpirationTime);
-    case Profiler:
-      return updateProfiler(current, workInProgress, renderExpirationTime);
-    case ContextProvider:
-      return updateContextProvider(
-        current,
-        workInProgress,
-        renderExpirationTime,
-      );
-    case ContextConsumer:
-      return updateContextConsumer(
-        current,
-        workInProgress,
-        renderExpirationTime,
-      );
-    case MemoComponent: {
-      const type = workInProgress.type;
-      const unresolvedProps = workInProgress.pendingProps;
-      // Resolve outer props first, then resolve inner props.
-      let resolvedProps = resolveDefaultProps(type, unresolvedProps);
-      if (__DEV__) {
-        if (workInProgress.type !== workInProgress.elementType) {
-          const outerPropTypes = type.propTypes;
-          if (outerPropTypes) {
-            checkPropTypes(
-              outerPropTypes,
-              resolvedProps, // Resolved for outer only
-              'prop',
-              getComponentName(type),
-            );
-          }
-        }
-      }
-      resolvedProps = resolveDefaultProps(type.type, resolvedProps);
-      return updateMemoComponent(
-        current,
-        workInProgress,
-        type,
-        resolvedProps,
-        updateExpirationTime,
-        renderExpirationTime,
-      );
-    }
-    case SimpleMemoComponent: {
-      return updateSimpleMemoComponent(
-        current,
-        workInProgress,
-        workInProgress.type,
-        workInProgress.pendingProps,
-        updateExpirationTime,
-        renderExpirationTime,
-      );
-    }
-    case IncompleteClassComponent: {
-      const Component = workInProgress.type;
-      const unresolvedProps = workInProgress.pendingProps;
-      const resolvedProps =
-        workInProgress.elementType === Component
-          ? unresolvedProps
-          : resolveDefaultProps(Component, unresolvedProps);
-      return mountIncompleteClassComponent(
-        current,
-        workInProgress,
-        Component,
-        resolvedProps,
-        renderExpirationTime,
-      );
-    }
-    case SuspenseListComponent: {
-      return updateSuspenseListComponent(
-        current,
-        workInProgress,
-        renderExpirationTime,
-      );
-    }
-    case FundamentalComponent: {
-      if (enableFundamentalAPI) {
-        return updateFundamentalComponent(
-          current,
-          workInProgress,
-          renderExpirationTime,
-        );
-      }
-      break;
-    }
-    case ScopeComponent: {
-      if (enableScopeAPI) {
-        return updateScopeComponent(
-          current,
-          workInProgress,
-          renderExpirationTime,
-        );
-      }
-      break;
-    }
-    case Block: {
-      if (enableBlocksAPI) {
-        const block = workInProgress.type;
-        const props = workInProgress.pendingProps;
-        return updateBlock(
-          current,
-          workInProgress,
-          block,
-          props,
-          renderExpirationTime,
-        );
-      }
-      break;
-    }
   }
 }
-
 ```
+
+接着通过workInProgress.tag来执行不同组件的逻辑
+  首先进入HostRoot，它是我们React应用挂载的根节点,
+它通过对比prevChildren和nextChildren来决定是否要跳过更新，
+  如果相同则调用bailoutOnAlreadyFinishedWork，通过childExpirationTime来判断子节点是否有更新，没有更新则返回null，调出这次调度，有更新则通过cloneChildFibers把current的child复制给workInProgress，
+  如果不相同则通过reconcileChildren来调和子节点。
 
 ```js
 function updateHostRoot(current, workInProgress, renderExpirationTime) {
-  pushHostRootContext(workInProgress);
-  const updateQueue = workInProgress.updateQueue;
-  const nextProps = workInProgress.pendingProps;
   const prevState = workInProgress.memoizedState;
   const prevChildren = prevState !== null ? prevState.element : null;
-  cloneUpdateQueue(current, workInProgress);
-  processUpdateQueue(workInProgress, nextProps, null, renderExpirationTime);
+  // ...
   const nextState = workInProgress.memoizedState;
-  // Caution: React DevTools currently depends on this property
-  // being called "element".
   const nextChildren = nextState.element;
   if (nextChildren === prevChildren) {
-    // If the state is the same as before, that's a bailout because we had
-    // no work that expires at this time.
-    resetHydrationState();
     return bailoutOnAlreadyFinishedWork(
       current,
       workInProgress,
@@ -620,100 +171,6 @@ function updateHostRoot(current, workInProgress, renderExpirationTime) {
     );
   }
   const root: FiberRoot = workInProgress.stateNode;
-  if (root.hydrate && enterHydrationState(workInProgress)) {
-    // If we don't have any current children this might be the first pass.
-    // We always try to hydrate. If this isn't a hydration pass there won't
-    // be any children to hydrate which is effectively the same thing as
-    // not hydrating.
-
-    if (supportsHydration) {
-      const mutableSourceEagerHydrationData = root.mutableSourceEagerHydrationData;
-      if (mutableSourceEagerHydrationData != null) {
-        for (let i = 0; i < mutableSourceEagerHydrationData.length; i += 2) {
-          const mutableSource = mutableSourceEagerHydrationData[i];
-          const version = mutableSourceEagerHydrationData[i + 1];
-          setWorkInProgressVersion(mutableSource, version);
-        }
-      }
-    }
-
-    const child = mountChildFibers(
-      workInProgress,
-      null,
-      nextChildren,
-      renderExpirationTime,
-    );
-    workInProgress.child = child;
-
-    let node = child;
-    while (node) {
-      // Mark each child as hydrating. This is a fast path to know whether this
-      // tree is part of a hydrating tree. This is used to determine if a child
-      // node has fully mounted yet, and for scheduling event replaying.
-      // Conceptually this is similar to Placement in that a new subtree is
-      // inserted into the React tree here. It just happens to not need DOM
-      // mutations because it already exists.
-      node.effectTag = (node.effectTag & ~Placement) | Hydrating;
-      node = node.sibling;
-    }
-  } else {
-    // Otherwise reset hydration state in case we aborted and resumed another
-    // root.
-    reconcileChildren(
-      current,
-      workInProgress,
-      nextChildren,
-      renderExpirationTime,
-    );
-    resetHydrationState();
-  }
-  return workInProgress.child;
-}
-
-function updateHostComponent(current, workInProgress, renderExpirationTime) {
-  pushHostContext(workInProgress);
-
-  if (current === null) {
-    tryToClaimNextHydratableInstance(workInProgress);
-  }
-
-  const type = workInProgress.type;
-  const nextProps = workInProgress.pendingProps;
-  const prevProps = current !== null ? current.memoizedProps : null;
-
-  let nextChildren = nextProps.children;
-  const isDirectTextChild = shouldSetTextContent(type, nextProps);
-
-  if (isDirectTextChild) {
-    // We special case a direct text child of a host node. This is a common
-    // case. We won't handle it as a reified child. We will instead handle
-    // this in the host environment that also has access to this prop. That
-    // avoids allocating another HostText fiber and traversing it.
-    nextChildren = null;
-  } else if (prevProps !== null && shouldSetTextContent(type, prevProps)) {
-    // If we're switching from a direct text child to a normal child, or to
-    // empty, we need to schedule the text content to be reset.
-    workInProgress.effectTag |= ContentReset;
-  }
-
-  markRef(current, workInProgress);
-
-  // Check the host config to see if the children are offscreen/hidden.
-  if (
-    workInProgress.mode & ConcurrentMode &&
-    renderExpirationTime !== Never &&
-    shouldDeprioritizeSubtree(type, nextProps)
-  ) {
-    if (enableSchedulerTracing) {
-      markSpawnedWork(Never);
-    }
-    // Schedule this fiber to re-render at offscreen priority. Then bailout.
-    workInProgress.expirationTime = workInProgress.childExpirationTime = Never;
-    // We should never render the children of a dehydrated boundary until we
-    // upgrade it. We return null instead of bailoutOnAlreadyFinishedWork.
-    return null;
-  }
-
   reconcileChildren(
     current,
     workInProgress,
@@ -723,15 +180,28 @@ function updateHostComponent(current, workInProgress, renderExpirationTime) {
   return workInProgress.child;
 }
 
-function updateHostText(current, workInProgress) {
-  if (current === null) {
-    tryToClaimNextHydratableInstance(workInProgress);
+function bailoutOnAlreadyFinishedWork(
+  current: Fiber | null,
+  workInProgress: Fiber,
+  renderExpirationTime: ExpirationTime,
+): Fiber | null {
+  // ...
+  const childExpirationTime = workInProgress.childExpirationTime;
+  if (childExpirationTime < renderExpirationTime) {
+    return null;
+  } else {
+    cloneChildFibers(current, workInProgress);
+    return workInProgress.child;
   }
-  // Nothing to do here. This is terminal. We'll do the completion step
-  // immediately after.
-  return null;
 }
+
 ```
+
+再来是分析Class组件，它会根据是否存在实例，和current是否是null，来决定调用对应的生命周期
+   - 实例不存在，那么就调用constructClassInstance和mountClassInstance，分别对应new 操作和调用componentWillMount，给effectTag增加标签等一系列动作，所以从这里也能知道为什么会在后续的版本中废弃
+   componentWillMount等生命周期，就是因为这里可能会被多次调用，会出现不可预期的异常。
+   - 实例存在，但是当前是创建阶段，调用resumeMountClassInstance， 这种比较奇怪，有可能是服务端渲染的情况，不多展开
+   - 实例存在，是更新阶段，这种情况很好理解，就是普通的更新调用updateClassInstance
 
 ```js
 function updateClassComponent(
@@ -741,32 +211,14 @@ function updateClassComponent(
   nextProps,
   renderExpirationTime: ExpirationTime,
 ) {
-  // Push context providers early to prevent context stack mismatches.
-  // During mounting we don't know the child context yet as the instance doesn't exist.
-  // We will invalidate the child context in finishClassComponent() right after rendering.
-  let hasContext;
-  if (isLegacyContextProvider(Component)) {
-    hasContext = true;
-    pushLegacyContextProvider(workInProgress);
-  } else {
-    hasContext = false;
-  }
-  prepareToReadContext(workInProgress, renderExpirationTime);
-
   const instance = workInProgress.stateNode;
   let shouldUpdate;
   if (instance === null) {
     if (current !== null) {
-      // A class component without an instance only mounts if it suspended
-      // inside a non-concurrent tree, in an inconsistent state. We want to
-      // treat it like a new mount, even though an empty version of it already
-      // committed. Disconnect the alternate pointers.
       current.alternate = null;
       workInProgress.alternate = null;
-      // Since this is conceptually a new fiber, schedule a Placement effect
       workInProgress.effectTag |= Placement;
     }
-    // In the initial pass we might need to construct the instance.
     constructClassInstance(workInProgress, Component, nextProps);
     mountClassInstance(
       workInProgress,
@@ -776,7 +228,6 @@ function updateClassComponent(
     );
     shouldUpdate = true;
   } else if (current === null) {
-    // In a resume, we'll already have an instance we can reuse.
     shouldUpdate = resumeMountClassInstance(
       workInProgress,
       Component,
@@ -804,109 +255,41 @@ function updateClassComponent(
 }
 ```
 
-```js
-function adoptClassInstance(workInProgress: Fiber, instance: any): void {
-  instance.updater = classComponentUpdater;
-  workInProgress.stateNode = instance;
-  // The instance needs access to the fiber so that it can schedule updates
-  setInstance(instance, workInProgress);
-}
+接着来依次进行分析首先是constructClassInstance和mountClassInstance，会先初始化实例，然后调用
+applyDerivedStateFromProps，componentWillMount生命周期，如果有componentDidMount定义，在effecTag上
+会加一个Upadte标记以便后续调用。
 
+```js
 function constructClassInstance(
   workInProgress: Fiber,
   ctor: any,
   props: any,
 ): any {
-  let isLegacyContextConsumer = false;
-  let unmaskedContext = emptyContextObject;
   let context = emptyContextObject;
   const contextType = ctor.contextType;
 
   if (typeof contextType === 'object' && contextType !== null) {
+    // 获取context
     context = readContext((contextType: any));
-  } else if (!disableLegacyContext) {
-    unmaskedContext = getUnmaskedContext(workInProgress, ctor, true);
-    const contextTypes = ctor.contextTypes;
-    isLegacyContextConsumer =
-      contextTypes !== null && contextTypes !== undefined;
-    context = isLegacyContextConsumer
-      ? getMaskedContext(workInProgress, unmaskedContext)
-      : emptyContextObject;
   }
-
-
+  // 实例化
   const instance = new ctor(props, context);
   const state = (workInProgress.memoizedState =
     instance.state !== null && instance.state !== undefined
       ? instance.state
       : null);
+  // 初始化setState等方法，所以在construct中无法调用setState等api
   adoptClassInstance(workInProgress, instance);
-
-  // Cache unmasked context so we can avoid recreating masked context unless necessary.
-  // ReactFiberContext usually updates this cache but can't for newly-created instances.
-  if (isLegacyContextConsumer) {
-    cacheContext(workInProgress, unmaskedContext, context);
-  }
 
   return instance;
 }
 
-function callComponentWillMount(workInProgress, instance) {
-  const oldState = instance.state;
-
-  if (typeof instance.componentWillMount === 'function') {
-    instance.componentWillMount();
-  }
-  if (typeof instance.UNSAFE_componentWillMount === 'function') {
-    instance.UNSAFE_componentWillMount();
-  }
-
-  if (oldState !== instance.state) {
-    if (__DEV__) {
-      console.error(
-        '%s.componentWillMount(): Assigning directly to this.state is ' +
-          "deprecated (except inside a component's " +
-          'constructor). Use setState instead.',
-        getComponentName(workInProgress.type) || 'Component',
-      );
-    }
-    classComponentUpdater.enqueueReplaceState(instance, instance.state, null);
-  }
+function adoptClassInstance(workInProgress: Fiber, instance: any): void {
+  instance.updater = classComponentUpdater;
+  workInProgress.stateNode = instance;
+  setInstance(instance, workInProgress);
 }
 
-function callComponentWillReceiveProps(
-  workInProgress,
-  instance,
-  newProps,
-  nextContext,
-) {
-  const oldState = instance.state;
-  if (typeof instance.componentWillReceiveProps === 'function') {
-    instance.componentWillReceiveProps(newProps, nextContext);
-  }
-  if (typeof instance.UNSAFE_componentWillReceiveProps === 'function') {
-    instance.UNSAFE_componentWillReceiveProps(newProps, nextContext);
-  }
-
-  if (instance.state !== oldState) {
-    if (__DEV__) {
-      const componentName =
-        getComponentName(workInProgress.type) || 'Component';
-      if (!didWarnAboutStateAssignmentForComponent.has(componentName)) {
-        didWarnAboutStateAssignmentForComponent.add(componentName);
-        console.error(
-          '%s.componentWillReceiveProps(): Assigning directly to ' +
-            "this.state is deprecated (except inside a component's " +
-            'constructor). Use setState instead.',
-          componentName,
-        );
-      }
-    }
-    classComponentUpdater.enqueueReplaceState(instance, instance.state, null);
-  }
-}
-
-// Invokes the mount life-cycles on a previously never rendered instance.
 function mountClassInstance(
   workInProgress: Fiber,
   ctor: any,
@@ -918,21 +301,15 @@ function mountClassInstance(
   instance.state = workInProgress.memoizedState;
   instance.refs = emptyRefsObject;
 
-  initializeUpdateQueue(workInProgress);
-
   const contextType = ctor.contextType;
+  // class组件可以通过this.context获取context
   if (typeof contextType === 'object' && contextType !== null) {
     instance.context = readContext(contextType);
-  } else if (disableLegacyContext) {
-    instance.context = emptyContextObject;
-  } else {
-    const unmaskedContext = getUnmaskedContext(workInProgress, ctor, true);
-    instance.context = getMaskedContext(workInProgress, unmaskedContext);
   }
 
-  processUpdateQueue(workInProgress, newProps, instance, renderExpirationTime);
   instance.state = workInProgress.memoizedState;
 
+  // 调用getDerivedStateFromProps
   const getDerivedStateFromProps = ctor.getDerivedStateFromProps;
   if (typeof getDerivedStateFromProps === 'function') {
     applyDerivedStateFromProps(
@@ -944,8 +321,7 @@ function mountClassInstance(
     instance.state = workInProgress.memoizedState;
   }
 
-  // In order to support react-lifecycles-compat polyfilled components,
-  // Unsafe lifecycles should not be invoked for components using the new APIs.
+  // 调用componentWillMount，这里面可以访问this，所以需要重新处理UpdateQueue，重新赋值给state
   if (
     typeof ctor.getDerivedStateFromProps !== 'function' &&
     typeof instance.getSnapshotBeforeUpdate !== 'function' &&
@@ -953,8 +329,6 @@ function mountClassInstance(
       typeof instance.componentWillMount === 'function')
   ) {
     callComponentWillMount(workInProgress, instance);
-    // If we had additional state updates during this life-cycle, let's
-    // process them now.
     processUpdateQueue(
       workInProgress,
       newProps,
@@ -964,145 +338,16 @@ function mountClassInstance(
     instance.state = workInProgress.memoizedState;
   }
 
+  // componentDidMount并不会调用，而是在effectTag上增加一个标记Update
   if (typeof instance.componentDidMount === 'function') {
     workInProgress.effectTag |= Update;
   }
 }
+```
+resumeMountClassInstance情况比较特殊，所以不去展开，接着来看updateClassInstance的逻辑
 
-function resumeMountClassInstance(
-  workInProgress: Fiber,
-  ctor: any,
-  newProps: any,
-  renderExpirationTime: ExpirationTime,
-): boolean {
-  const instance = workInProgress.stateNode;
+```js
 
-  const oldProps = workInProgress.memoizedProps;
-  instance.props = oldProps;
-
-  const oldContext = instance.context;
-  const contextType = ctor.contextType;
-  let nextContext = emptyContextObject;
-  if (typeof contextType === 'object' && contextType !== null) {
-    nextContext = readContext(contextType);
-  } else if (!disableLegacyContext) {
-    const nextLegacyUnmaskedContext = getUnmaskedContext(
-      workInProgress,
-      ctor,
-      true,
-    );
-    nextContext = getMaskedContext(workInProgress, nextLegacyUnmaskedContext);
-  }
-
-  const getDerivedStateFromProps = ctor.getDerivedStateFromProps;
-  const hasNewLifecycles =
-    typeof getDerivedStateFromProps === 'function' ||
-    typeof instance.getSnapshotBeforeUpdate === 'function';
-
-  // Note: During these life-cycles, instance.props/instance.state are what
-  // ever the previously attempted to render - not the "current". However,
-  // during componentDidUpdate we pass the "current" props.
-
-  // In order to support react-lifecycles-compat polyfilled components,
-  // Unsafe lifecycles should not be invoked for components using the new APIs.
-  if (
-    !hasNewLifecycles &&
-    (typeof instance.UNSAFE_componentWillReceiveProps === 'function' ||
-      typeof instance.componentWillReceiveProps === 'function')
-  ) {
-    if (oldProps !== newProps || oldContext !== nextContext) {
-      callComponentWillReceiveProps(
-        workInProgress,
-        instance,
-        newProps,
-        nextContext,
-      );
-    }
-  }
-
-  resetHasForceUpdateBeforeProcessing();
-
-  const oldState = workInProgress.memoizedState;
-  let newState = (instance.state = oldState);
-  processUpdateQueue(workInProgress, newProps, instance, renderExpirationTime);
-  newState = workInProgress.memoizedState;
-  if (
-    oldProps === newProps &&
-    oldState === newState &&
-    !hasContextChanged() &&
-    !checkHasForceUpdateAfterProcessing()
-  ) {
-    // If an update was already in progress, we should schedule an Update
-    // effect even though we're bailing out, so that cWU/cDU are called.
-    if (typeof instance.componentDidMount === 'function') {
-      workInProgress.effectTag |= Update;
-    }
-    return false;
-  }
-
-  if (typeof getDerivedStateFromProps === 'function') {
-    applyDerivedStateFromProps(
-      workInProgress,
-      ctor,
-      getDerivedStateFromProps,
-      newProps,
-    );
-    newState = workInProgress.memoizedState;
-  }
-
-  const shouldUpdate =
-    checkHasForceUpdateAfterProcessing() ||
-    checkShouldComponentUpdate(
-      workInProgress,
-      ctor,
-      oldProps,
-      newProps,
-      oldState,
-      newState,
-      nextContext,
-    );
-
-  if (shouldUpdate) {
-    // In order to support react-lifecycles-compat polyfilled components,
-    // Unsafe lifecycles should not be invoked for components using the new APIs.
-    if (
-      !hasNewLifecycles &&
-      (typeof instance.UNSAFE_componentWillMount === 'function' ||
-        typeof instance.componentWillMount === 'function')
-    ) {
-      if (typeof instance.componentWillMount === 'function') {
-        instance.componentWillMount();
-      }
-      if (typeof instance.UNSAFE_componentWillMount === 'function') {
-        instance.UNSAFE_componentWillMount();
-      }
-    }
-    if (typeof instance.componentDidMount === 'function') {
-      workInProgress.effectTag |= Update;
-    }
-  } else {
-    // If an update was already in progress, we should schedule an Update
-    // effect even though we're bailing out, so that cWU/cDU are called.
-    if (typeof instance.componentDidMount === 'function') {
-      workInProgress.effectTag |= Update;
-    }
-
-    // If shouldComponentUpdate returned false, we should still update the
-    // memoized state to indicate that this work can be reused.
-    workInProgress.memoizedProps = newProps;
-    workInProgress.memoizedState = newState;
-  }
-
-  // Update the existing instance's state, props, and context pointers even
-  // if shouldComponentUpdate returns false.
-  instance.props = newProps;
-  instance.state = newState;
-  instance.context = nextContext;
-
-  return shouldUpdate;
-}
-
-// Invokes the update life-cycles and returns false if it shouldn't rerender.
 function updateClassInstance(
   current: Fiber,
   workInProgress: Fiber,
@@ -1114,35 +359,28 @@ function updateClassInstance(
 
   cloneUpdateQueue(current, workInProgress);
 
-  const unresolvedOldProps = workInProgress.memoizedProps;
-  const oldProps =
-    workInProgress.type === workInProgress.elementType
-      ? unresolvedOldProps
-      : resolveDefaultProps(workInProgress.type, unresolvedOldProps);
+  const oldProps = workInProgress.memoizedProps;
   instance.props = oldProps;
+   const unresolvedOldProps = workInProgress.memoizedProps;
   const unresolvedNewProps = workInProgress.pendingProps;
 
   const oldContext = instance.context;
   const contextType = ctor.contextType;
   let nextContext = emptyContextObject;
+  // 读取最新的context
   if (typeof contextType === 'object' && contextType !== null) {
     nextContext = readContext(contextType);
-  } else if (!disableLegacyContext) {
-    const nextUnmaskedContext = getUnmaskedContext(workInProgress, ctor, true);
-    nextContext = getMaskedContext(workInProgress, nextUnmaskedContext);
   }
+
 
   const getDerivedStateFromProps = ctor.getDerivedStateFromProps;
   const hasNewLifecycles =
     typeof getDerivedStateFromProps === 'function' ||
     typeof instance.getSnapshotBeforeUpdate === 'function';
 
-  // Note: During these life-cycles, instance.props/instance.state are what
-  // ever the previously attempted to render - not the "current". However,
-  // during componentDidUpdate we pass the "current" props.
-
-  // In order to support react-lifecycles-compat polyfilled components,
-  // Unsafe lifecycles should not be invoked for components using the new APIs.
+  // 在有新生命周期getDerivedStateFromProps的情况下不调用componentWillReceiveProps
+  // 如果新旧props或者新旧context引用不相同则会调用componentWillReceiveProps函数
+  // 在componentWillReceiveProps中如果state被修改，会用新的state创建一个更新，启动一个新的调度，所以这里可能会出现无限更新的情况
   if (
     !hasNewLifecycles &&
     (typeof instance.UNSAFE_componentWillReceiveProps === 'function' ||
@@ -1161,40 +399,24 @@ function updateClassInstance(
     }
   }
 
-  resetHasForceUpdateBeforeProcessing();
-
   const oldState = workInProgress.memoizedState;
   let newState = (instance.state = oldState);
+  // 处理更新队列，生成新的state
   processUpdateQueue(workInProgress, newProps, instance, renderExpirationTime);
   newState = workInProgress.memoizedState;
 
+  // workInProgress的props和state都没有变化，说明当前组件没有更新，返回false指示当前组件可以不更新
   if (
     unresolvedOldProps === unresolvedNewProps &&
     oldState === newState &&
     !hasContextChanged() &&
     !checkHasForceUpdateAfterProcessing()
   ) {
-    // If an update was already in progress, we should schedule an Update
-    // effect even though we're bailing out, so that cWU/cDU are called.
-    if (typeof instance.componentDidUpdate === 'function') {
-      if (
-        unresolvedOldProps !== current.memoizedProps ||
-        oldState !== current.memoizedState
-      ) {
-        workInProgress.effectTag |= Update;
-      }
-    }
-    if (typeof instance.getSnapshotBeforeUpdate === 'function') {
-      if (
-        unresolvedOldProps !== current.memoizedProps ||
-        oldState !== current.memoizedState
-      ) {
-        workInProgress.effectTag |= Snapshot;
-      }
-    }
+    // ...
     return false;
   }
 
+  // 调用getDerivedStateFromProps设置新的state
   if (typeof getDerivedStateFromProps === 'function') {
     applyDerivedStateFromProps(
       workInProgress,
@@ -1205,6 +427,9 @@ function updateClassInstance(
     newState = workInProgress.memoizedState;
   }
 
+  /**
+   ** checkShouldComponentUpdate首先会根据shouldComponentUpdate的返回值来决定是否需要更新，其次是isPureReactComponent的话还会默认浅对比props和state来决定是否需要更新
+   */
   const shouldUpdate =
     checkHasForceUpdateAfterProcessing() ||
     checkShouldComponentUpdate(
@@ -1217,9 +442,8 @@ function updateClassInstance(
       nextContext,
     );
 
+  // 需要更新的话，会调用componentWillUpdate钩子，另外定义了componentDidUpdate或者getSnapshotBeforeUpdate生命周期函数的话， 在effectTag上加Update或者Snapshot Tag。
   if (shouldUpdate) {
-    // In order to support react-lifecycles-compat polyfilled components,
-    // Unsafe lifecycles should not be invoked for components using the new APIs.
     if (
       !hasNewLifecycles &&
       (typeof instance.UNSAFE_componentWillUpdate === 'function' ||
@@ -1239,33 +463,10 @@ function updateClassInstance(
       workInProgress.effectTag |= Snapshot;
     }
   } else {
-    // If an update was already in progress, we should schedule an Update
-    // effect even though we're bailing out, so that cWU/cDU are called.
-    if (typeof instance.componentDidUpdate === 'function') {
-      if (
-        unresolvedOldProps !== current.memoizedProps ||
-        oldState !== current.memoizedState
-      ) {
-        workInProgress.effectTag |= Update;
-      }
-    }
-    if (typeof instance.getSnapshotBeforeUpdate === 'function') {
-      if (
-        unresolvedOldProps !== current.memoizedProps ||
-        oldState !== current.memoizedState
-      ) {
-        workInProgress.effectTag |= Snapshot;
-      }
-    }
-
-    // If shouldComponentUpdate returned false, we should still update the
-    // memoized props/state to indicate that this work can be reused.
-    workInProgress.memoizedProps = newProps;
-    workInProgress.memoizedState = newState;
+    // ...
   }
 
-  // Update the existing instance's state, props, and context pointers even
-  // if shouldComponentUpdate returns false.
+  // 最终把新值复制，返回shouldUpdate，作为是否要调用render函数的标志
   instance.props = newProps;
   instance.state = newState;
   instance.context = nextContext;
@@ -1274,41 +475,143 @@ function updateClassInstance(
 }
 ```
 
+在updateClassInstance中会去分别比对新旧state，props，context来给shouldUpdate赋值，用于决定是否需要调用render函数，其中会依次componentWillReceiveProps，getDerivedStateFromProps，ShouldComponentUpdate，componentWillUpdate钩子，另外如果定义componentDidUpdate或者getSnapshotBeforeUpdate还会额外打上Tag，用于后续调用，其中componentWillReceiveProps和componentWillUpdate都是可以创建更新来设置state，所以两个方法在后续会被废弃，目前可以用getDerivedStateFromProps来替代。
+
+另外对于Pure组件还会使用内置的浅对比算法来进行状态的比对，用于防止无谓的更新，所以推荐写Class组件的时候默认使用Pure组件来进行继承。
+
+当上述流程结束以后，我们就能知道这个组件是否应该更新，如果不更新的话，就直接跳过，否则的话需要调用render函数，
+返回新的children element节点，对children节点进行处理，最后返回第一个子节点，用于下一次循环使用
+
 ```js
-export function reconcileChildren(
+function finishClassComponent(
   current: Fiber | null,
   workInProgress: Fiber,
-  nextChildren: any,
+  Component: any,
+  shouldUpdate: boolean,
+  hasContext: boolean,
   renderExpirationTime: ExpirationTime,
 ) {
-  if (current === null) {
-    // If this is a fresh new component that hasn't been rendered yet, we
-    // won't update its child set by applying minimal side-effects. Instead,
-    // we will add them all to the child before it gets rendered. That means
-    // we can optimize this reconciliation pass by not tracking side-effects.
-    workInProgress.child = reconcileChildFibers(
+  // 不需要更新，直接跳过
+  if (!shouldUpdate) {
+    return bailoutOnAlreadyFinishedWork(
+      current,
       workInProgress,
-      null,
-      nextChildren,
-      renderExpirationTime,
-    );
-  } else {
-    // If the current child is the same as the work in progress, it means that
-    // we haven't yet started any work on these children. Therefore, we use
-    // the clone algorithm to create a copy of all the current children.
-
-    // If we had any progressed work already, that is invalid at this point so
-    // let's throw it out.
-    workInProgress.child = reconcileChildFibers(
-      workInProgress,
-      current.child,
-      nextChildren,
       renderExpirationTime,
     );
   }
+
+  const instance = workInProgress.stateNode;
+
+  ReactCurrentOwner.current = workInProgress;
+  // 调用render，生成children，进行children的处理
+  let nextChildren = instance.render();
+
+  reconcileChildren(
+    current,
+    workInProgress,
+    nextChildren,
+    renderExpirationTime,
+  );
+
+  workInProgress.memoizedState = instance.state;
+
+  // 处理结束返回第一个子节点
+  return workInProgress.child;
 }
 ```
 
+
+说完了Class组件再来看下函数组件，函数组件不谈hooks的话，逻辑就比Class组件简单不少，只是需要调用函数组件，返回
+nextChildren element，根据didReceiveUpdate和hooks的情况来决定是否需要跳过更新，不跳过更新的话就会和class组件一样去调和子节点，返回子节点中的第一个用于下次循环使用。
+
+这里值得一提的是无论组件需不需要更新，都是会render，而不是像class组件去通过shouldUpate后再来执行render函数，所以React提供了memo组件来帮助优化Function组件的性能。
+
+```js
+function updateFunctionComponent(
+  current,
+  workInProgress,
+  Component,
+  nextProps: any,
+  renderExpirationTime,
+) {
+  let context;
+  let nextChildren;
+  prepareToReadContext(workInProgress, renderExpirationTime);
+  // 下面类似 nextChildren = Component(nextProps, context);
+  nextChildren = renderWithHooks(
+    current,
+    workInProgress,
+    Component,
+    nextProps,
+    context,
+    renderExpirationTime,
+  );
+
+  // 在除去hooks的影响下，能够让函数组件进行更新的就只有props和context，所以这里只需要根据didReceiveUpdate的值，来决定是否跳过更新
+  if (current !== null && !didReceiveUpdate) {
+    bailoutHooks(current, workInProgress, renderExpirationTime);
+    return bailoutOnAlreadyFinishedWork(
+      current,
+      workInProgress,
+      renderExpirationTime,
+    );
+  }
+
+  reconcileChildren(
+    current,
+    workInProgress,
+    nextChildren,
+    renderExpirationTime,
+  );
+  return workInProgress.child;
+}
+```
+
+两个常用的React组件讲完后我们来看看DOM组件和Text组件的创建和更新,这两个组件的逻辑主要在completeWork中，所以放在一起带过
+
+DOM组件
+  DOM组件这里React在这里做了一次优化，在只有一个子节点的情况下，直接停止往下遍历，进入到completeWork的阶段，
+另外一种情况是更新之前有单个子节点，但是到现在没有子节点了，这就需要把之前的节点内容删除，会给effectTag打一个
+ContentReset的Tag，在commit阶段被使用，然后就是普通情况，有多个子节点，那就继续调用reconcileChildren调和子节点，返回第一个子节点。
+Text组件
+  无需做任何事情，结束beginWork，进入到completeWork。
+
+```js
+function updateHostComponent(current, workInProgress, renderExpirationTime) {
+  const type = workInProgress.type;
+  const nextProps = workInProgress.pendingProps;
+  const prevProps = current !== null ? current.memoizedProps : null;
+
+  let nextChildren = nextProps.children;
+  const isDirectTextChild = shouldSetTextContent(type, nextProps);
+
+  if (isDirectTextChild) {
+    nextChildren = null;
+  } else if (prevProps !== null && shouldSetTextContent(type, prevProps)) {
+    workInProgress.effectTag |= ContentReset;
+  }
+
+  reconcileChildren(
+    current,
+    workInProgress,
+    nextChildren,
+    renderExpirationTime,
+  );
+  return workInProgress.child;
+}
+
+function updateHostText(current, workInProgress) {
+  return null;
+}
+```
+
+接下来就说到reconcileChildren这个方法，这个方法是大家都很熟悉的diff算法的实现，一起来看看他做了哪些事情
+
+reconcileChildren其实就是调用了reconcileChildFibers，其中入参分别是
+ - returnFiber： 当前全局的workInProgress节点
+ - currentFirstChild： 创建阶段为null，更新节点是current的第一个Fiber子节点
+ - newChild： render函数返回的React element对象
+ - expirationTime： 渲染时间
 ```js
 function reconcileChildFibers(
     returnFiber: Fiber,
@@ -1316,14 +619,7 @@ function reconcileChildFibers(
     newChild: any,
     expirationTime: ExpirationTime,
   ): Fiber | null {
-    // This function is not recursive.
-    // If the top level item is an array, we treat it as a set of children,
-    // not as a fragment. Nested arrays on the other hand will be treated as
-    // fragment nodes. Recursion happens at the normal flow.
-
-    // Handle top level unkeyed fragments as if they were arrays.
-    // This leads to an ambiguity between <>{[...]}</> and <>...</>.
-    // We treat the ambiguous cases above the same.
+    // 当前ReactElement对象是ReactFragment对象的话，直接把ReactFragment对象的child拿出来，这是因为ReactFragment没有意义只是一个组合代码的片段，也不需要渲染到页面上
     const isUnkeyedTopLevelFragment =
       typeof newChild === 'object' &&
       newChild !== null &&
@@ -1333,10 +629,8 @@ function reconcileChildFibers(
       newChild = newChild.props.children;
     }
 
-    // Handle object types
-    const isObject = typeof newChild === 'object' && newChild !== null;
-
-    if (isObject) {
+    // newChild是对象，说明是单独一个组件或者DOM节点
+    if (typeof newChild === 'object' && newChild !== null) {
       switch (newChild.$$typeof) {
         case REACT_ELEMENT_TYPE:
           return placeSingleChild(
@@ -1347,30 +641,10 @@ function reconcileChildFibers(
               expirationTime,
             ),
           );
-        case REACT_PORTAL_TYPE:
-          return placeSingleChild(
-            reconcileSinglePortal(
-              returnFiber,
-              currentFirstChild,
-              newChild,
-              expirationTime,
-            ),
-          );
-        case REACT_LAZY_TYPE:
-          if (enableLazyElements) {
-            const payload = newChild._payload;
-            const init = newChild._init;
-            // TODO: This function is supposed to be non-recursive.
-            return reconcileChildFibers(
-              returnFiber,
-              currentFirstChild,
-              init(payload),
-              expirationTime,
-            );
-          }
       }
     }
 
+    // 说明是一个文本节点
     if (typeof newChild === 'string' || typeof newChild === 'number') {
       return placeSingleChild(
         reconcileSingleTextNode(
@@ -1382,6 +656,7 @@ function reconcileChildFibers(
       );
     }
 
+    // 是ReactElement节点数组
     if (isArray(newChild)) {
       return reconcileChildrenArray(
         returnFiber,
@@ -1390,127 +665,31 @@ function reconcileChildFibers(
         expirationTime,
       );
     }
-
-    // Remaining cases are all treated as empty.
     return deleteRemainingChildren(returnFiber, currentFirstChild);
   }
 ```
 
+上述代码首先判断newChild的类型，如果是React对象，(字符串，数字)或者数组都会有相应的处理
+
+**deleteRemainingChildren**
+
+先来看不属于上述任何一种情况的case,其中shouldTrackSideEffects为false表示创建阶段，为true表示更新阶段
+
 ```js
-  function placeSingleChild(newFiber: Fiber): Fiber {
-    // This is simpler for the single child case. We only need to do a
-    // placement for inserting new children.
-    if (shouldTrackSideEffects && newFiber.alternate === null) {
-      newFiber.effectTag = Placement;
-    }
-    return newFiber;
-  }
-
-    function reconcileSingleElement(
-    returnFiber: Fiber,
-    currentFirstChild: Fiber | null,
-    element: ReactElement,
-    expirationTime: ExpirationTime,
-  ): Fiber {
-    const key = element.key;
-    let child = currentFirstChild;
-    while (child !== null) {
-      // TODO: If key === null and child.key === null, then this only applies to
-      // the first item in the list.
-      if (child.key === key) {
-        switch (child.tag) {
-          case Fragment: {
-            if (element.type === REACT_FRAGMENT_TYPE) {
-              deleteRemainingChildren(returnFiber, child.sibling);
-              const existing = useFiber(child, element.props.children);
-              existing.return = returnFiber;
-              return existing;
-            }
-            break;
-          }
-          case Block:
-            if (enableBlocksAPI) {
-              let type = element.type;
-              if (type.$$typeof === REACT_LAZY_TYPE) {
-                type = resolveLazyType(type);
-              }
-              if (type.$$typeof === REACT_BLOCK_TYPE) {
-                // The new Block might not be initialized yet. We need to initialize
-                // it in case initializing it turns out it would match.
-                if (
-                  ((type: any): BlockComponent<any, any>)._render ===
-                  (child.type: BlockComponent<any, any>)._render
-                ) {
-                  deleteRemainingChildren(returnFiber, child.sibling);
-                  const existing = useFiber(child, element.props);
-                  existing.type = type;
-                  existing.return = returnFiber;
-                  if (__DEV__) {
-                    existing._debugSource = element._source;
-                    existing._debugOwner = element._owner;
-                  }
-                  return existing;
-                }
-              }
-            }
-          // We intentionally fallthrough here if enableBlocksAPI is not on.
-          // eslint-disable-next-lined no-fallthrough
-          default: {
-            if (
-              child.elementType === element.type
-            ) {
-              deleteRemainingChildren(returnFiber, child.sibling);
-              const existing = useFiber(child, element.props);
-              existing.ref = coerceRef(returnFiber, child, element);
-              existing.return = returnFiber;
-              return existing;
-            }
-            break;
-          }
-        }
-        // Didn't match.
-        deleteRemainingChildren(returnFiber, child);
-        break;
-      } else {
-        deleteChild(returnFiber, child);
-      }
-      child = child.sibling;
-    }
-
-    if (element.type === REACT_FRAGMENT_TYPE) {
-      const created = createFiberFromFragment(
-        element.props.children,
-        returnFiber.mode,
-        expirationTime,
-        element.key,
-      );
-      created.return = returnFiber;
-      return created;
-    } else {
-      const created = createFiberFromElement(
-        element,
-        returnFiber.mode,
-        expirationTime,
-      );
-      created.ref = coerceRef(returnFiber, currentFirstChild, element);
-      created.return = returnFiber;
-      return created;
-    }
-  }
-
-   function deleteRemainingChildren(
+function deleteRemainingChildren(
     returnFiber: Fiber,
     currentFirstChild: Fiber | null,
   ): null {
+    // 创建阶段无动作
     if (!shouldTrackSideEffects) {
       // Noop.
       return null;
     }
 
-    // TODO: For the shouldClone case, this could be micro-optimized a bit by
-    // assuming that after the first child we've already added everything.
+    // 这里的case说的是开始有内容，更新后无内容的情况，所以需要把之前的Fiber节点都删除
     let childToDelete = currentFirstChild;
     while (childToDelete !== null) {
+      // 通过循环不停的寻找sibling，直到最后一个，将每一个Fiber节点打上Deletion的Tag
       deleteChild(returnFiber, childToDelete);
       childToDelete = childToDelete.sibling;
     }
@@ -1518,15 +697,11 @@ function reconcileChildFibers(
   }
 
   function deleteChild(returnFiber: Fiber, childToDelete: Fiber): void {
+    // 创建阶段无动作
     if (!shouldTrackSideEffects) {
-      // Noop.
       return;
     }
-    // Deletions are added in reversed order so we add it to the front.
-    // At this point, the return fiber's effect list is empty except for
-    // deletions, so we can just append the deletion to the list. The remaining
-    // effects aren't added until the complete phase. Once we implement
-    // resuming, this may not be true.
+    // 把子节点挂载到父节点的Effect链表上，后续就不用再次遍历每一个节点来确定哪些节点有副作用了
     const last = returnFiber.lastEffect;
     if (last !== null) {
       last.nextEffect = childToDelete;
@@ -1534,28 +709,86 @@ function reconcileChildFibers(
     } else {
       returnFiber.firstEffect = returnFiber.lastEffect = childToDelete;
     }
+    
+    // 打 Deletion Tag
     childToDelete.nextEffect = null;
     childToDelete.effectTag = Deletion;
   }
+```
 
-    function reconcileSingleTextNode(
+上述函数的工作内容把需要被删除的节点打上Deletion的Tag，并且串联起来放到父节点上
+ 
+**reconcileSingleElement**
+
+接着来看单个React对象节点的情况
+
+```js
+ function reconcileSingleElement(
+    returnFiber: Fiber,
+    currentFirstChild: Fiber | null,
+    element: ReactElement,
+    expirationTime: ExpirationTime,
+  ): Fiber {
+    // 根据key，和type进行对比，比对上就复用Fiber，因为新的节点只有一个，所以最后需要删除剩余的兄弟Fiber节点
+    const key = element.key;
+    let child = currentFirstChild;
+    while (child !== null) {
+      // 对比key
+      if (child.key === key) {
+        // 对比type
+        if (child.elementType === element.type) {
+          // 相同的话，就复用当前Fiber，删除后面的Fiber
+          deleteRemainingChildren(returnFiber, child.sibling);
+          const existing = useFiber(child, element.props);
+          existing.ref = coerceRef(returnFiber, child, element);
+          existing.return = returnFiber;
+          return existing;
+        } else {
+          // key相同但是type不同，无法复用，全部删除
+          deleteRemainingChildren(returnFiber, child);
+          break;
+        }
+      } else {
+        // key都不同，可能是被位移了，删除当前的Fiber
+        deleteChild(returnFiber, child);
+      }
+      // 继续往下找兄弟
+      child = child.sibling;
+    }
+
+    // 无法复用Fiber，只能重新创建一个新的Fiber节点,但是Ref需要被转移到新的Fiber节点上
+    const created = createFiberFromElement(
+      element,
+      returnFiber.mode,
+      expirationTime,
+    );
+    created.ref = coerceRef(returnFiber, currentFirstChild, element);
+    created.return = returnFiber;
+    return created;
+  }
+```
+
+根据key和type对比，选择复用还是新建Fiber，另外对多余的Fiber进行清理。
+
+**reconcileSingleTextNode**
+
+也和reconcileSingleElement逻辑类似，只不过只要对比Fiber是否是HostText类型即可复用
+
+```js    
+function reconcileSingleTextNode(
     returnFiber: Fiber,
     currentFirstChild: Fiber | null,
     textContent: string,
     expirationTime: ExpirationTime,
   ): Fiber {
-    // There's no need to check for keys on text nodes since we don't have a
-    // way to define them.
+    // 更新阶段查看之前的Fiber是否也是HostText类型，是的话就复用它，修改textContent即可
     if (currentFirstChild !== null && currentFirstChild.tag === HostText) {
-      // We already have an existing node so let's just update it and delete
-      // the rest.
       deleteRemainingChildren(returnFiber, currentFirstChild.sibling);
       const existing = useFiber(currentFirstChild, textContent);
       existing.return = returnFiber;
       return existing;
     }
-    // The existing first child is not a text node so we need to create one
-    // and delete the existing ones.
+    // 无法复用则删除所有的Fiber节点,重新创建一个新的Fiber
     deleteRemainingChildren(returnFiber, currentFirstChild);
     const created = createFiberFromText(
       textContent,
@@ -1567,6 +800,10 @@ function reconcileChildFibers(
   }
 ```
 
+**reconcileChildrenArray**
+
+终于来到这其中复杂的diff对比算法，先浏览代码流程
+
 ```js
  function reconcileChildrenArray(
     returnFiber: Fiber,
@@ -1574,26 +811,6 @@ function reconcileChildFibers(
     newChildren: Array<*>,
     expirationTime: ExpirationTime,
   ): Fiber | null {
-    // This algorithm can't optimize by searching from both ends since we
-    // don't have backpointers on fibers. I'm trying to see how far we can get
-    // with that model. If it ends up not being worth the tradeoffs, we can
-    // add it later.
-
-    // Even with a two ended optimization, we'd want to optimize for the case
-    // where there are few changes and brute force the comparison instead of
-    // going for the Map. It'd like to explore hitting that path first in
-    // forward-only mode and only go for the Map once we notice that we need
-    // lots of look ahead. This doesn't handle reversal as well as two ended
-    // search but that's unusual. Besides, for the two ended optimization to
-    // work on Iterables, we'd need to copy the whole set.
-
-    // In this first iteration, we'll just live with hitting the bad case
-    // (adding everything to a Map) in for every insert/move.
-
-    // If you change this code, also update reconcileChildrenIterator() which
-    // uses the same algorithm.
-
-
     let resultingFirstChild: Fiber | null = null;
     let previousNewFiber: Fiber | null = null;
 
@@ -1608,78 +825,54 @@ function reconcileChildFibers(
       } else {
         nextOldFiber = oldFiber.sibling;
       }
+      // 如果type和key相同则复用Fiber，key不相同则返回null，key相同但是type不相同就创建一个新的Fiber
       const newFiber = updateSlot(
         returnFiber,
         oldFiber,
         newChildren[newIdx],
         expirationTime,
       );
+      // 当oldFiber和newChildren[newIdx]的key不相同时，就跳出当前循环
       if (newFiber === null) {
-        // TODO: This breaks on empty slots like null children. That's
-        // unfortunate because it triggers the slow path all the time. We need
-        // a better way to communicate whether this was a miss or null,
-        // boolean, undefined, etc.
         if (oldFiber === null) {
           oldFiber = nextOldFiber;
         }
         break;
       }
-      if (shouldTrackSideEffects) {
-        if (oldFiber && newFiber.alternate === null) {
-          // We matched the slot, but we didn't reuse the existing fiber, so we
-          // need to delete the existing child.
-          deleteChild(returnFiber, oldFiber);
-        }
-      }
+      // ...
+      // 如果是新增或者是移动的节点，打上Placement的Tag
       lastPlacedIndex = placeChild(newFiber, lastPlacedIndex, newIdx);
-      if (previousNewFiber === null) {
-        // TODO: Move out of the loop. This only happens for the first run.
-        resultingFirstChild = newFiber;
-      } else {
-        // TODO: Defer siblings if we're not at the right index for this slot.
-        // I.e. if we had null values before, then we want to defer this
-        // for each null value. However, we also don't want to call updateSlot
-        // with the previous one.
-        previousNewFiber.sibling = newFiber;
-      }
+      // 当前循环结束，往下走一位索引，进行下一个位置的对比
       previousNewFiber = newFiber;
       oldFiber = nextOldFiber;
     }
 
+    // 新的Element索引已经走完了，删除剩余老的Fiber节点，这种是删除的情况
     if (newIdx === newChildren.length) {
       // We've reached the end of the new children. We can delete the rest.
       deleteRemainingChildren(returnFiber, oldFiber);
       return resultingFirstChild;
     }
 
+    // 新的Element索引没有走完，但是老的Fiber已经没有了，这种是新增的情况，
+    // 就直接把剩余的新Element创建一遍即可
     if (oldFiber === null) {
-      // If we don't have any more existing children we can choose a fast path
-      // since the rest will all be insertions.
       for (; newIdx < newChildren.length; newIdx++) {
         const newFiber = createChild(
           returnFiber,
           newChildren[newIdx],
           expirationTime,
         );
-        if (newFiber === null) {
-          continue;
-        }
-        lastPlacedIndex = placeChild(newFiber, lastPlacedIndex, newIdx);
-        if (previousNewFiber === null) {
-          // TODO: Move out of the loop. This only happens for the first run.
-          resultingFirstChild = newFiber;
-        } else {
-          previousNewFiber.sibling = newFiber;
-        }
-        previousNewFiber = newFiber;
-      }
+        // ...
+      lastPlacedIndex = placeChild(newFiber, lastPlacedIndex, newIdx);
       return resultingFirstChild;
     }
 
-    // Add all children to a key map for quick lookups.
+    // 能走到这里说明，新的Element也还有，老的Fiber节点也还有，只是key无法比对上
+    // 把老的Fiber用key创建一个Map
     const existingChildren = mapRemainingChildren(returnFiber, oldFiber);
 
-    // Keep scanning and use the map to restore deleted items as moves.
+    // 接下去按序遍历新Element节点，通过key去map中寻找是否有可以被复用的
     for (; newIdx < newChildren.length; newIdx++) {
       const newFiber = updateFromMap(
         existingChildren,
@@ -1689,36 +882,46 @@ function reconcileChildFibers(
         expirationTime,
       );
       if (newFiber !== null) {
+        // 找到了能够复用的Fiber节点，就需要从map中剔除
         if (shouldTrackSideEffects) {
           if (newFiber.alternate !== null) {
-            // The new fiber is a work in progress, but if there exists a
-            // current, that means that we reused the fiber. We need to delete
-            // it from the child list so that we don't add it to the deletion
-            // list.
             existingChildren.delete(
               newFiber.key === null ? newIdx : newFiber.key,
             );
           }
         }
         lastPlacedIndex = placeChild(newFiber, lastPlacedIndex, newIdx);
-        if (previousNewFiber === null) {
-          resultingFirstChild = newFiber;
-        } else {
-          previousNewFiber.sibling = newFiber;
-        }
-        previousNewFiber = newFiber;
+        // ...
       }
     }
 
+    // 新Element节点循环结束后，如果map中还有剩余的Fiber，这些Fiber会被打上删除的标记
     if (shouldTrackSideEffects) {
-      // Any existing children that weren't consumed above were deleted. We need
-      // to add them to the deletion list.
       existingChildren.forEach(child => deleteChild(returnFiber, child));
     }
 
     return resultingFirstChild;
   }
 ```
+虽然其中有三个循环，但是每一个循环都是以newIdx为结束条件的，所以实际上只有O(n)的复杂度。
+
+我们用一个例子来分析执行过程
+
+```js
+// key和内容一致，type都是div
+A B C D
+A E F D C
+```
+
+第一轮循环的时候type都是div，key都是A，所以会通过*updateSlot*直接复用老的Fiber节点
+第二轮循环老的是key是B，新的key是E，newFiber被设置为null，接就跳出第一个循环。
+但是也不符合下面两种情况，第一种是newIdx已经走完了，第二种是oldFiber已经为null。
+所以最终会把老的Fiber节点放到map中，接下去依次遍历新的Element，看是否能够复用Fiber，当newIdx到最后的时候，流程结束。
+另外每创建一个Fiber节点都会通过placeChild来往上打Placement Tag
+
+至此beginWork的工作就结束了，接下去是往上遍历调用CompleteWork
+
+## completeWork
 
 ```js
 function completeUnitOfWork(unitOfWork: Fiber): void {
