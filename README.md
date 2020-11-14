@@ -1,7 +1,8 @@
 # [博客地址](https://github.com/AfterThreeYears/blog)
   | 文章 | 修改时间 |
   |:---|:------------|
-  |[React中的reconcile流程.md](https://github.com/AfterThreeYears/blog/blob/master/docs/React%E4%B8%AD%E7%9A%84reconcile%E6%B5%81%E7%A8%8B.md)|2020-11-05 21:50:51|
+  |[React中的commit流程.md](https://github.com/AfterThreeYears/blog/blob/master/docs/React%E4%B8%AD%E7%9A%84commit%E6%B5%81%E7%A8%8B.md)|2020-11-14 16:18:05|
+|[React中的reconcile流程.md](https://github.com/AfterThreeYears/blog/blob/master/docs/React%E4%B8%AD%E7%9A%84reconcile%E6%B5%81%E7%A8%8B.md)|2020-11-05 21:50:51|
 |[React中的调度算法.md](https://github.com/AfterThreeYears/blog/blob/master/docs/React%E4%B8%AD%E7%9A%84%E8%B0%83%E5%BA%A6%E7%AE%97%E6%B3%95.md)|2020-11-02 22:03:22|
 |[ReactDOM#render工作机制.md](https://github.com/AfterThreeYears/blog/blob/master/docs/ReactDOM%23render%E5%B7%A5%E4%BD%9C%E6%9C%BA%E5%88%B6.md)|2020-10-16 09:18:24|
 |[React中Context的使用和实现.md](https://github.com/AfterThreeYears/blog/blob/master/docs/React%E4%B8%ADContext%E7%9A%84%E4%BD%BF%E7%94%A8%E5%92%8C%E5%AE%9E%E7%8E%B0.md)|2020-10-06 17:46:00|
