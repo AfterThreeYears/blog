@@ -1,5 +1,5 @@
 const fs = require('fs');
-const { resolve } = require('path');
+const { resolve, basename } = require('path');
 const dayjs = require('dayjs');
 const { promisifyAll } = require('bluebird');
 const simpleGit = require('simple-git');
@@ -10,8 +10,11 @@ const git = simpleGit().init();
 
 async function getModifiedMDFilePath() {
   const { modified, created, renamed } = await git.status();
-  // console.log(modified, created, renamed);
-  return [...new Set([...modified, ...created, ...renamed])]
+  return [...new Set([
+    ...modified,
+    ...created,
+    ...renamed.map(r => r.to)
+  ])]
     .filter(item => item.match(/docs\/(.)+\.md/))
     .map(item => item.replace(/docs\/|\"/g, ''));
 }

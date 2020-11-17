@@ -2,9 +2,6 @@
 
 创建queue
 
-mountClassInstance调用initializeUpdateQueue,接着马上调用processUpdateQueue，baseupdate和sharedpengdingupdate都是null，无事发生
-
-
 类组件在mountClassInstance会调用initializeUpdateQueue方法创建queue，挂载到fiber的updateQueue属性上
 
 ```js
