@@ -8,9 +8,9 @@
 
 ```js
 function mountEffect(
-  create: () => (() => void) | void,
-  deps: Array<mixed> | void | null,
-): void {
+  create,
+  deps,
+) {
   return mountEffectImpl(
     UpdateEffect | PassiveEffect,
     HookPassive,
@@ -20,9 +20,9 @@ function mountEffect(
 }
 
 function updateEffect(
-  create: () => (() => void) | void,
-  deps: Array<mixed> | void | null,
-): void {
+  create,
+  deps,
+) {
   return updateEffectImpl(
     UpdateEffect | PassiveEffect,
     HookPassive,
@@ -35,16 +35,16 @@ function updateEffect(
 
 ```js
 function mountLayoutEffect(
-  create: () => (() => void) | void,
-  deps: Array<mixed> | void | null,
-): void {
+  create,
+  deps,
+) {
   return mountEffectImpl(UpdateEffect, HookLayout, create, deps);
 }
 
 function updateLayoutEffect(
-  create: () => (() => void) | void,
-  deps: Array<mixed> | void | null,
-): void {
+  create,
+  deps,
+) {
   return updateEffectImpl(UpdateEffect, HookLayout, create, deps);
 }
 ```
@@ -52,7 +52,7 @@ function updateLayoutEffect(
 ### 通用
 
 ```js
-function mountEffectImpl(fiberEffectTag, hookEffectTag, create, deps): void {
+function mountEffectImpl(fiberEffectTag, hookEffectTag, create, deps) {
   const hook = mountWorkInProgressHook();
   const nextDeps = deps === undefined ? null : deps;
   currentlyRenderingFiber.effectTag |= fiberEffectTag;
@@ -64,7 +64,7 @@ function mountEffectImpl(fiberEffectTag, hookEffectTag, create, deps): void {
   );
 }
 
-function updateEffectImpl(fiberEffectTag, hookEffectTag, create, deps): void {
+function updateEffectImpl(fiberEffectTag, hookEffectTag, create, deps) {
   const hook = updateWorkInProgressHook();
   const nextDeps = deps === undefined ? null : deps;
   let destroy = undefined;
@@ -98,12 +98,12 @@ function pushEffect(tag, create, destroy, deps) {
     destroy,
     deps,
     // Circular
-    next: (null: any),
+    next: null,
   };
-  let componentUpdateQueue: null | FunctionComponentUpdateQueue = (currentlyRenderingFiber.updateQueue: any);
+  let componentUpdateQueue = (currentlyRenderingFiber.updateQueue: any);
   if (componentUpdateQueue === null) {
     componentUpdateQueue = createFunctionComponentUpdateQueue();
-    currentlyRenderingFiber.updateQueue = (componentUpdateQueue: any);
+    currentlyRenderingFiber.updateQueue = componentUpdateQueue;
     componentUpdateQueue.lastEffect = effect.next = effect;
   } else {
     const lastEffect = componentUpdateQueue.lastEffect;
@@ -118,7 +118,6 @@ function pushEffect(tag, create, destroy, deps) {
   }
   return effect;
 }
-
 ```
 
 
