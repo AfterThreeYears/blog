@@ -25,11 +25,10 @@ function commitRootImpl(root, renderPriorityLevel) {
 
     ReactCurrentOwner.current = null;
 
-    // 1.beforeMutation, 负责调用 getSnapshotBeforeUpdate，useEffect
+    // 1.beforeMutation, 负责调用 getSnapshotBeforeUpdate，调度useEffect
     nextEffect = firstEffect;
     do {
       // class组件执行getSnapshotBeforeUpdate，
-      // function组件执行useEffect
       commitBeforeMutationEffects();
     } while (nextEffect !== null);
 
@@ -50,6 +49,7 @@ function commitRootImpl(root, renderPriorityLevel) {
       // 1. 调用useLayoutEffect创建函数
       // 2. 创建/更新的节点调用componentDidMount，componentDidUpdate
       // 3. 重新设置Ref
+      // 4. 等待commit阶段结束以后，useEffect按照destroy，create的顺序被调用
       commitLayoutEffects(root, expirationTime);
     } while (nextEffect !== null);
 
@@ -82,7 +82,7 @@ function commitBeforeMutationEffects() {
       commitBeforeMutationEffectOnFiber(current, nextEffect);
     }
     if ((effectTag & Passive) !== NoEffect) {
-      // hook相关，依次调用useEffect的destroy和create函数
+      // hook相关，调度useEffect
       flushPassiveEffects();
     }
     nextEffect = nextEffect.nextEffect;
@@ -121,11 +121,13 @@ function commitMutationEffects(root: FiberRoot, renderPriorityLevel) {
       case Update: {
         const current = nextEffect.alternate;
         // 根据新的updateQueue来进行DOM的更新
+        // 调用useLayoutEffect的destroy函数
         commitWork(current, nextEffect);
         break;
       }
       case Deletion: {
         // 销毁阶段会根据当前节点的类型分别进行删除DOM节点和调用组件的销毁函数
+        // 调用useLayoutEffect的destroy函数
         commitDeletion(root, nextEffect, renderPriorityLevel);
         break;
       }

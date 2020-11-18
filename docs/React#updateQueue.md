@@ -483,7 +483,7 @@ function dispatchAction<S, A>(
           // without calling the reducer again.
           update.eagerReducer = lastRenderedReducer;
           update.eagerState = eagerState;
-          // 新老state
+          // 新老state对比，没有更新则可以不启动调度
           if (is(eagerState, currentState)) {
             // Fast path. We can bail out without scheduling React to re-render.
             // It's still possible that we'll need to rebase this update later,
