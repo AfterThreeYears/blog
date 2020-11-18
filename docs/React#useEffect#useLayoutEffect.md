@@ -147,4 +147,4 @@ commitLayoutEffects中以同步方式调用useLayoutEffect的create
 
 综上所述，不论是useEffect还是useLayoutEffect都是在DOM变更以后才会被调用的，至于为什么useEffect需要被异步调用，这里引用官方的话来说，这是希望useEffect中的函数不会阻塞浏览器的渲染，而你如果需要同步操作DOM的话，可以使用useLayoutEffect
 
-<img src="../images/useEffect1.png" width="600" />
+<img src="../image/useEffect1.png" width="600" />
