@@ -4,57 +4,73 @@
 
 ## 前言
 
-在React16版本中重写了新的`fiber`架构，其中引入了新的diff算法，在以前的版本中React进行虚拟DOM的`diff`是不会进行中断的，会占用大量的执行时间，导致渲染被延后、页面卡顿，所以在新的`fiber`架构中，React团队希望能够通过一个个小的异步任务来执行`diff`的工作，从而不让页面造成卡顿，今天我们就来详细了解一下这个算法的内幕。
+在React16版本中重写了新的`fiber`架构，其中引入了新的**调度算法**，在以前的版本中React进行虚拟DOM的`diff`是不会进行中断的，会占用大量的执行时间，导致渲染被延后、页面卡顿，所以在新的`fiber`架构中，React团队希望能够通过一个个小的异步任务来执行`diff`的工作，从而不让页面造成卡顿，今天我们就来详细了解一下这个**调度算法**的内幕。
 
 ## 如何把一个巨型任务进行切分？
 
-首先如何把一个巨型任务进行拆分，下面有一个例子
+首先不考虑React是怎么实现调度算法的，我们抛出一个问题，如何把一个巨型任务进行拆分，下面有一个例子，如果是你的话，你会怎么做？
 
-```js
-const array = Array.from(Array(1000000)).fill(1);
+```html
+<script>
 function read(arr) {
-    arr.forEach((_, i) => {
-        console.log(i);
-    });
+  arr.forEach((_, i) => {
+    console.log(i);
+  });
 }
+
+const array = Array.from(Array(1000000)).fill(1);
+
 console.log('task start');
 read(array);
 console.log('task end');
+</script>
+<h1>hello world</h1>
 ```
 
-大家都知道上面的代码会打印出0到一百万，当我们把这段代码放到网页中，打开浏览器的时候会卡个几秒钟，甚至更久，这就是因为js执行会阻塞浏览器渲染，导致js运行结束浏览器才会渲染UI，那么怎么解决这个问题呢？
+大家都知道上面的代码首先会打印**task start**,接着浏览器的tab上会开始转圈圈，如果电脑性能比较差的话，圈圈可能会转的比较久，过了几秒后，再打印出**task end** 然后你才能看见页面上渲染出**hello world**, 这就是因为js执行会阻塞浏览器渲染，导致js运行结束浏览器才会渲染UI，那么怎么解决这个问题呢？
 
-我们可以把一百万个数字按照100个一组，拆分成一万个任务，然后放在定时器里，按照30帧的刷新率每33ms执行一个任务，这样就能解决js运行太久导致阻塞渲染，其实React中调度算法大致也是这样一个基本思想。
+### 拆分成小任务
 
-当下调度算法比较常用的有两种，第一种是**抢占式调度**，在操作系统层面表示CPU可以决定当前时间片给哪个进程使用，但是浏览器并没有这个权限，第二种是React使用的**合作式调度**，也就是大家事先说好每人占用多久时间片，全凭自觉。
+我们可以把一百万个数字按照`100个一组`，拆分成`一万个任务`，然后放在定时器里，让它在下一个事件循环里再被执行，这样就能解决js运行太久导致阻塞渲染，其实React中调度算法大致也是这样一个基本思想。
+
+- ![分析1](../image/Scheduling_analysis1.png)
+
+- ![分析2](../image/Scheduling_analysis2.png)
+
+通过*Chrome Performance*的图片来验证上面的观点，**黄色的js任务被拆分,于紫色的Layout和绿色Print交错执行**。
 
 以上例子的改进版如下
 ```js
-const array = Array.from(Array(1000000)).map((_, index) => index);
+const array = Array.from(Array(100000)).map((_, index) => index);
 function read(arr) {
-    arr.forEach((item) => {
-        console.log(item);
-    });
+  arr.forEach(function readCallback(item) {
+    console.log(item);
+  });
 }
 console.log('task start');
 let i = 0;
 const len = 100;
 function task() {
-    setTimeout(() => {
-        const results = array.slice(i, i + len);
-        if (results.length === 0) {
-            console.log('task end');
-            return;
-        }
-        read(results);
-        i += len;
-        task();
-    }, 33);
+  setTimeout(function setTimeoutCallback(r) {
+    const results = array.slice(i, i + len);
+    if (results.length === 0) {
+      console.log('task end');
+      return;
+    }
+    read(results);
+    i += len;
+    task();
+  }, 0);
 }
 task();
 ```
 
 这时候再打开浏览器就会发现能够瞬间打开，并不会有任何卡顿的现象发生。
+
+
+## 调度概念
+
+当下调度算法比较常用的有两种，第一种是**抢占式调度**，在操作系统层面表示CPU可以决定当前时间片给哪个进程使用，但是浏览器并没有这个权限，第二种是React使用的**合作式调度**，也就是大家事先说好每人占用多久时间片，全凭自觉。
 
 ## React中什么时候会用到调度？
 
@@ -74,17 +90,21 @@ task();
 
 根据上述的结论能够知道调度的开始是在`scheduleUpdateOnFiber`方法上，接下来让我们来看下`scheduleUpdateOnFiber`
 
+`细节请查阅`
+ - https://github.com/AfterThreeYears/blog/blob/master/docs/React%E4%B8%AD%E7%9A%84reconcile%E6%B5%81%E7%A8%8B.md
+ - https://github.com/AfterThreeYears/blog/blob/master/docs/ReactDOM%23render%E5%B7%A5%E4%BD%9C%E6%9C%BA%E5%88%B6.md
+
 ## 开始调度
 
 
 
-```js
+```
                                      scheduleUpdateOnFiber 
                                               |
                                               |
                                               |
                                               V
-scheduleSyncCallback <-----SYNC----- ensureRootIsScheduled -----ASYNC-----> scheduleCallback
+scheduleSyncCallback <-----(SYNC)----- ensureRootIsScheduled -----(ASYNC)-----> scheduleCallback
         |                                                                           |
         |                                                                           |
         |                                                                           |
@@ -93,8 +113,8 @@ scheduleSyncCallback <-----SYNC----- ensureRootIsScheduled -----ASYNC-----> sche
         
 ```
 
-首先从`scheduleUpdateOnFiber`调用中发现`expirationTime`变量无论是不是`Sync`最终都会调用到ensureRootIsScheduled函数，接下去`ensureRootIsScheduled`中会根据当前的运行环境*（同步还是异步）*来决定调用`scheduleSyncCallback`还是`scheduleCallback`，
-通过观察`scheduleSyncCallback`和`scheduleCallback`函数的实现来看内部都是会去调用`Scheduler_scheduleCallback`这个函数，唯一的区别则是`scheduleCallback`传入的第一个参数是通过当前的expirationTime去计算出的一个优先级，而`scheduleSyncCallback`传入的优先级则是固定写死的`Scheduler_ImmediatePriority`，也就是*-1*，表示立即同步执行回调函数，所以`Scheduler_scheduleCallback`在这里可以理解为如果传入-1则同步调用回调函数，传入其他数字则等待数字需要的时间后，异步调用setTimeout执行回调，在后面会详细分析`Scheduler_scheduleCallback`到底做了哪些事情？
+首先从`scheduleUpdateOnFiber`调用中发现`expirationTime`变量无论是不是`Sync`最终都会调用到`ensureRootIsScheduled`函数，接下去`ensureRootIsScheduled`中会根据当前的运行环境 **（同步还是异步）** 来决定调用`scheduleSyncCallback`还是`scheduleCallback`，
+通过观察`scheduleSyncCallback`和`scheduleCallback`函数的实现来看内部都是会去调用`Scheduler_scheduleCallback`这个函数，唯一的区别则是`scheduleCallback`传入的第一个参数是通过当前的expirationTime去计算出的一个优先级，而`scheduleSyncCallback`传入的优先级则是固定写死的`Scheduler_ImmediatePriority`，也就是 **-1**，表示立即同步执行回调函数，所以`Scheduler_scheduleCallback`在这里可以理解为如果传入-1则同步调用回调函数，传入其他数字则等待数字需要的时间后，异步调用setTimeout执行回调，在后面会详细分析`Scheduler_scheduleCallback`到底做了哪些事情？
 
 ```js
 export function scheduleUpdateOnFiber(
@@ -167,7 +187,7 @@ export function scheduleSyncCallback(callback: SchedulerCallback) {
 
 ## 小根堆
 
-在深入`Scheduler_scheduleCallback`之前先来了解一个数据结构`堆`，堆是一种*二叉树*，所以也符合二叉树的一些特性，比如说有个节点`n(n >= 1)`, `n >> 1`，表示获取这个节点的父节点的位置， `n * 2`表示是这个节点的左子节点的位置，`n * 2 + 1`是这个节点的右子节点的位置，堆还区分`大根堆`和`小根堆`，`大根堆`表示每一个父节点都会大于它的两个子节点，而`小根堆`则相反，每一个父节点都小于它的两个子节点，通过这个特性，能够实现一个动态的优先级队列，并且时间复杂度是`logn`,是一种执行效率上很优秀的数据结构。
+在深入`Scheduler_scheduleCallback`之前先来了解一个数据结构`堆`，堆是一种*二叉树*，所以也符合二叉树的一些特性，比如说有个节点`n(n >= 1)`, `n >> 1`，表示获取这个节点的父节点的位置， `n * 2`表示是这个节点的左子节点的位置，`n * 2 + 1`是这个节点的右子节点的位置，堆还区分`大根堆`和`小根堆`，`大根堆`表示每一个父节点都会大于它的两个子节点，而`小根堆`则相反，每一个父节点都小于它的两个子节点，通过这个特性，能够实现一个动态的优先级队列，并且时间复杂度是`O(logn)`,是一种执行效率上很优秀的数据结构。
 
 React需要有一种数据结构来帮助它进行diff任务的存储，其中需要频繁的插入单个节点和单次取出优先级最高的节点，最小堆正好完美符合React所需要的特性。
 
@@ -430,7 +450,7 @@ function workLoop(hasTimeRemaining, initialTime) {
 
 ## 目前生产环境的调度模式
 
-我们目前还是使用`ReactDOM.render`去进行应用的创建，所以在这种模式下虽然会通过`requestHostCallback`把回调放到下一个事件循环去执行，但是内部的多个任务并不会被中断，而是一次性在一个时间片中去把所有的任务全部执行完，所以并不是大家认为的当下版本的React已经是可以中断渲染，这点还是需要注意一下，如果想要尝试可中断的React渲染模式，还需要安装实验版本*https://zh-hans.reactjs.org/docs/concurrent-mode-intro.html*，通过`ReactDOM.createRoot`进行应用的创建，才是真正官方声称的*Concurrent模式*，支持可中断，多任务时间片的特性。
+我们目前还是使用`ReactDOM.render`去进行应用的创建，所以在这种模式下虽然会通过`requestHostCallback`把回调放到下一个事件循环去执行，但是内部的多个任务并不会被中断，而是一次性在一个时间片中去把所有的任务全部执行完，所以并不是大家认为的当下版本的React已经是可以中断渲染，这点还是需要注意一下，如果想要尝试可中断的React渲染模式，还需要安装实验版本**https://zh-hans.reactjs.org/docs/concurrent-mode-intro.html**，通过`ReactDOM.createRoot`进行应用的创建，才是真正官方声称的*Concurrent模式*，拥有可中断，多任务时间片的特性。
 
 ## 总结
 
