@@ -33,9 +33,9 @@ console.log('task end');
 
 我们可以把一百万个数字按照`100个一组`，拆分成`一万个任务`，然后放在定时器里，让它在下一个事件循环里再被执行，这样就能解决js运行太久导致阻塞渲染，其实React中调度算法大致也是这样一个基本思想。
 
-- ![分析1](../image/Scheduling_analysis1.png)
+<img src="https://kano.guahao.cn/Rwz393768627?token=OGFlYTM0OGU0NWFmYmNjMmU3MTkwMDJlYTdhMGY2NmRfTUQ1COUSTOM&v=1.0" width="888" />
 
-- ![分析2](../image/Scheduling_analysis2.png)
+<img src="https://kano.guahao.cn/Bgo393767789?token=YTdmM2RhNDE0NTE2YTI1ZmMwZWE2ODdlYTY4Y2FiMDVfTUQ1COUSTOM&v=1.0" width="888" />
 
 通过*Chrome Performance*的图片来验证上面的观点，**黄色的js任务被拆分,于紫色的Layout和绿色Print交错执行**。
 
@@ -72,9 +72,43 @@ task();
 
 当下调度算法比较常用的有两种，第一种是**抢占式调度**，在操作系统层面表示CPU可以决定当前时间片给哪个进程使用，但是浏览器并没有这个权限，第二种是React使用的**合作式调度**，也就是大家事先说好每人占用多久时间片，全凭自觉。
 
-## React中什么时候会用到调度？
+## React为什么需要调度？
+
+1. 拆分`diff操作`
+2. 区别任务优先级
 
 前面说过调度主要是用来拆分`diff操作`，那么也就是说什么时候会进行diff，能够引起diff的操作只有触发更新，在React中触发更新的操作分别有`ReactDOM.render`, `setState`, `forceUpdate`, `useState`, `useReducer`, 一起来这些方法看看有什么共同点
+
+Google提出了`RAIL模型`：
+ - 以用户为中心；最终目标不是让您的网站在任何特定设备上都能运行很快，而是使用户满意。
+ - 立即响应用户；在 100ms以内确认用户输入,用于离散型交互操作，需要100ms内得以响应
+ - 设置动画或滚动时，在 16ms以内生成帧.
+ - 最大程度增加主线程的空闲时间，保证JS单任务执行时间不超过50ms。
+ - 持续吸引用户；在 1000ms以内呈现交互内容，首屏秒开。
+
+所以并不是所有的操作都是一样的优先级，React对用户操作进行了以下分类，调度系统也是为了操作的优先级来服务的
+
+```js
+// 立即执行
+const ImmediatePriority = 1;
+var IMMEDIATE_PRIORITY_TIMEOUT = -1;
+
+// 250ms后过期 用户阻塞型优先级 文本输入等
+const UserBlockingPriority = 2;
+var USER_BLOCKING_PRIORITY = 250;
+
+// 5000ms后过期 普通优先级 网络请求等
+const NormalPriority = 3;
+var NORMAL_PRIORITY_TIMEOUT = 5000;
+
+// 10000ms后过期 低优先级 数据分析等
+const LowPriority = 4;
+var LOW_PRIORITY_TIMEOUT = 10000;
+
+// 理论上永不过期 空闲优先级
+const IdlePriority = 5;
+var IDLE_PRIORITY = 1073741823;
+```
 
 ## 引发调度
 
@@ -450,8 +484,16 @@ function workLoop(hasTimeRemaining, initialTime) {
 
 ## 目前生产环境的调度模式
 
-我们目前还是使用`ReactDOM.render`去进行应用的创建，所以在这种模式下虽然会通过`requestHostCallback`把回调放到下一个事件循环去执行，但是内部的多个任务并不会被中断，而是一次性在一个时间片中去把所有的任务全部执行完，所以并不是大家认为的当下版本的React已经是可以中断渲染，这点还是需要注意一下，如果想要尝试可中断的React渲染模式，还需要安装实验版本**https://zh-hans.reactjs.org/docs/concurrent-mode-intro.html**，通过`ReactDOM.createRoot`进行应用的创建，才是真正官方声称的*Concurrent模式*，拥有可中断，多任务时间片的特性。
+我们目前还是使用`ReactDOM.render`去进行应用的创建，所以在这种模式下虽然会通过`requestHostCallback`把回调放到下一个事件循环去执行，但是内部的多个任务并不会被中断，而是一次性在一个时间片中去把所有的任务全部执行完，所以并不是大家认为的当下版本的React已经是可以中断渲染，这点还是需要注意一下，如果想要尝试可中断的React渲染模式，还需要安装实验版本**https://zh-hans.reactjs.org/docs/concurrent-mode-intro.html**  ，通过`ReactDOM.createRoot`进行应用的创建，才是真正官方声称的*Concurrent模式*，拥有可中断，多任务时间片的特性。
 
 ## 总结
 
 我们通过对`React Scheduler`的分析，了解它是如何把一个个小的`diff任务`，通过**合作式调度**的方案，在多个时间片中调用，不阻塞浏览器的渲染，给用户带去丝滑的浏览体验。
+
+## 扩展阅读
+
+
+- 精读《Scheduling in React》
+    https://juejin.cn/post/6844903821433372680#heading-3
+- 浅谈React Scheduler任务管理
+    https://zhuanlan.zhihu.com/p/48254036
